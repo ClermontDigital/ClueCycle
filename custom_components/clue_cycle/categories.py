@@ -30,6 +30,19 @@ CATEGORIES: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "sex", "label": "Sex and sex drive", "color": "#8A6BD8", "icon": "mdi:heart-multiple-outline",
+        "options": [
+            _opt("protected", "Protected sex", "mdi:shield-check-outline"),
+            _opt("unprotected", "Unprotected sex", "mdi:heart-outline"),
+            _opt("withdrawal", "Withdrawal", "mdi:heart-half-outline"),
+            _opt("orgasm", "Orgasm", "mdi:star-four-points-outline"),
+            _opt("sex_toys", "Sex toys", "mdi:shimmer"),
+            _opt("high_sex_drive", "High sex drive", "mdi:fire"),
+            _opt("low_sex_drive", "Low sex drive", "mdi:snowflake"),
+            _opt("masturbation", "Masturbation", "mdi:heart-circle-outline"),
+        ],
+    },
+    {
         "id": "collection", "label": "Collection method", "color": "#C2353B", "icon": "mdi:water-check",
         "options": [
             _opt("tampon", "Tampon", "mdi:pill"),
@@ -159,25 +172,28 @@ CATEGORIES: list[dict[str, Any]] = [
         ],
     },
     {
-        "id": "sex", "label": "Sex and sex drive", "color": "#8A6BD8", "icon": "mdi:heart-multiple-outline",
-        "options": [
-            _opt("protected", "Protected sex", "mdi:shield-heart-outline"),
-            _opt("unprotected", "Unprotected sex", "mdi:heart-outline"),
-            _opt("withdrawal", "Withdrawal", "mdi:heart-half-outline"),
-            _opt("orgasm", "Orgasm", "mdi:star-four-points-outline"),
-            _opt("sex_toys", "Sex toys", "mdi:shimmer"),
-            _opt("high_sex_drive", "High sex drive", "mdi:fire"),
-            _opt("low_sex_drive", "Low sex drive", "mdi:snowflake"),
-            _opt("masturbation", "Masturbation", "mdi:heart-circle-outline"),
-        ],
-    },
-    {
         "id": "tests", "label": "Tests", "color": "#5B8DEF", "icon": "mdi:test-tube",
         "options": [
             _opt("ovulation_positive", "Ovulation test +", "mdi:plus-circle-outline"),
             _opt("ovulation_negative", "Ovulation test -", "mdi:minus-circle-outline"),
             _opt("pregnancy_positive", "Pregnancy test +", "mdi:plus-box-outline"),
             _opt("pregnancy_negative", "Pregnancy test -", "mdi:minus-box-outline"),
+        ],
+    },
+    {
+        # Only shown when the owner turns on fertility treatment tracking.
+        "id": "treatment", "label": "Treatment", "color": "#2BA6A0", "icon": "mdi:needle", "treatment": True,
+        "options": [
+            _opt("baseline_scan", "Baseline scan", "mdi:radiobox-marked"),
+            _opt("monitoring_scan", "Monitoring scan", "mdi:radar"),
+            _opt("blood_test", "Blood test", "mdi:test-tube"),
+            _opt("trigger", "Trigger shot", "mdi:needle"),
+            _opt("egg_collection", "Egg collection", "mdi:egg-outline"),
+            _opt("fresh_transfer", "Fresh transfer", "mdi:arrow-right-bold-circle-outline"),
+            _opt("frozen_transfer", "Frozen transfer", "mdi:snowflake"),
+            _opt("iui", "IUI", "mdi:arrow-down-bold-circle-outline"),
+            _opt("pregnancy_test", "Pregnancy blood test", "mdi:water-check-outline"),
+            _opt("pregnancy_scan", "Pregnancy scan", "mdi:heart-pulse"),
         ],
     },
     {

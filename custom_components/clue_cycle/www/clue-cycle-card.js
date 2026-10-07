@@ -2,7 +2,7 @@
  * Unofficial; not affiliated with Clue or BioWink GmbH.
  * Buildless: plain JS custom element, served by the clue_cycle integration.
  */
-const CC_VERSION = "0.2.0";
+const CC_VERSION = "0.3.0";
 
 const COL = {
   bg: "#1C1B19", surface: "#262422", surface2: "#2F2D2A", line: "#3B3936",
@@ -18,6 +18,22 @@ const KIND_COL = {
   period: COL.red, period_predicted: "rgba(232,71,63,0.35)", fertile: COL.blue,
   fertile_peak: COL.blueDark, ovulation: COL.blueDark, normal: COL.grey,
 };
+// Fertility treatment colours, and the days drawn as a marker on the ring: [fill, centre, run underneath].
+const TX = { stim: "#E8A33D", tww: "#7E62C9", trigger: "#E8A33D", collection: "#2BA6A0", transfer: "#3C9B76", test: "#E0679A" };
+Object.assign(KIND_COL, { stim: TX.stim, tww: TX.tww, trigger: TX.trigger, collection: TX.collection,
+  collection_expected: TX.collection, transfer: TX.transfer, test: TX.test });
+const MARKERS = {
+  ovulation: [COL.blueLight, COL.blueDark, "fertile_peak"], trigger: ["#FFE3B8", TX.trigger, "stim"],
+  collection: ["#BFEDE9", TX.collection, "normal"], collection_expected: [null, TX.collection, "normal"],
+  transfer: ["#C8F0DA", TX.transfer, "tww"], test: ["#F8C9DA", TX.test, "tww"],
+};
+const DAY_BG = {
+  period: COL.red, period_predicted: "rgba(232,71,63,0.22)", fertile: COL.blue, fertile_peak: COL.blueDark,
+  ovulation: COL.blueDark, stim: "rgba(232,163,61,0.75)", tww: "rgba(126,98,201,0.6)", trigger: TX.trigger,
+  collection: TX.collection, collection_expected: "rgba(43,166,160,0.35)", transfer: TX.transfer, test: TX.test,
+};
+const fmtNum = (n) => (n == null || n === "" ? "" : Number.isInteger(+n) ? String(+n) : String(+(+n).toFixed(2)));
+const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -42,7 +58,7 @@ const polar = (cx, cy, r, a) => [cx + r * Math.cos((a * Math.PI) / 180), cy + r 
 class ClueCycleCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
-    this._view = this._config.view || "today";
+    this._view = this._config.view === "track" ? "log" : (this._config.view || "today");
   }
 
   static getStubConfig() { return {}; }
@@ -139,6 +155,20 @@ class ClueCycleCard extends HTMLElement {
     if (this._view === "settings" && this._tracker.role === "owner" && !this._sharing) {
       this._sharing = await this._ws({ type: "clue_cycle/sharing", entry_id: this._entryId });
     }
+    if (ov.treatment_tracking) {
+      const [info, summary] = await Promise.all([
+        this._ws({ type: "clue_cycle/treatment_info", entry_id: this._entryId }),
+        this._view === "treatment" ? this._ws({ type: "clue_cycle/treatment_summary", ...base }) : Promise.resolve(this._summary),
+      ]);
+      this._tx = info;
+      this._txMeds = Object.fromEntries(info.meds.map((m) => [m.id, m]));
+      this._summary = summary;
+    } else if (this._view === "treatment") {
+      this._view = "today";
+    }
+    // Reminders and the phones they can go to (also used by the phase notification settings).
+    const wantSched = this._canEdit && (this._view === "treatment" || (this._view === "settings" && this._tracker.role === "owner"));
+    if (wantSched) this._sched = await this._ws({ type: "clue_cycle/schedules", entry_id: this._entryId });
     this._render();
   }
 
@@ -147,15 +177,17 @@ class ClueCycleCard extends HTMLElement {
   /* ---------- rendering ---------- */
 
   _render() {
-    const views = [["today", "Today", "mdi:circle-double"], ["log", "Log", "mdi:plus-circle-outline"],
-      ["calendar", "Calendar", "mdi:calendar-month-outline"], ["analysis", "Analysis", "mdi:chart-box-outline"],
-      ["settings", "Settings", "mdi:cog-outline"]];
+    const views = [["today", "Today", "mdi:circle-double"], ["log", "Track", "mdi:plus-circle-outline"],
+      ["calendar", "Calendar", "mdi:calendar-month-outline"], ["analysis", "Analysis", "mdi:chart-box-outline"]];
+    if (this._ov.treatment_tracking) views.push(["treatment", "Treatment", "mdi:needle"]);
+    views.push(["settings", "Settings", "mdi:cog-outline"]);
     const picker = this._trackers.length > 1
       ? `<select class="tracker" data-change="tracker">${this._trackers.map((t) => `<option value="${t.entry_id}" ${t.entry_id === this._entryId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select>`
       : `<div class="tracker-name">${esc(this._tracker.name)}</div>`;
     const role = this._tracker.role === "view" ? `<span class="badge">View only</span>` : this._tracker.role === "edit" ? `<span class="badge">Shared with you</span>` : "";
     const body = { today: () => this._today_(), log: () => this._log(), calendar: () => this._calendarView(),
-      analysis: () => this._analysisView(), settings: () => this._settings() }[this._view]();
+      analysis: () => this._analysisView(), treatment: () => this._treatmentView(),
+      settings: () => this._settings() }[this._view]();
     this._main.innerHTML = `
       <div class="top">${picker}${role}</div>
       <div class="body">${body}</div>
@@ -178,11 +210,11 @@ class ClueCycleCard extends HTMLElement {
     // Coloured runs: consecutive days of the same kind, with rounded ends that sit on the day edges.
     const runs = [];
     ring.forEach((d, i) => {
-      const k = d.kind === "ovulation" ? "fertile_peak" : d.kind;
+      const k = MARKERS[d.kind] ? MARKERS[d.kind][2] : d.kind;
       if (runs.length && runs[runs.length - 1].k === k) runs[runs.length - 1].end = i;
       else runs.push({ k, start: i, end: i });
     });
-    const order = ["fertile", "fertile_peak", "period_predicted", "period"];
+    const order = ["fertile", "fertile_peak", "stim", "tww", "period_predicted", "period"];
     for (const k of order) {
       for (const r of runs.filter((x) => x.k === k)) {
         let s = ang(r.start) + cap, e = ang(r.end + 1) - cap;
@@ -199,12 +231,15 @@ class ClueCycleCard extends HTMLElement {
         svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.2" fill="${c}"/>`;
       });
     });
-    // Ovulation marker.
-    const ovi = ring.findIndex((d) => d.kind === "ovulation");
-    if (ovi >= 0) {
-      const [x, y] = polar(cx, cy, R, ang(ovi) + per / 2);
-      svg += `<circle cx="${x}" cy="${y}" r="11" fill="${COL.blueLight}"/><circle cx="${x}" cy="${y}" r="3.6" fill="${COL.blueDark}"/>`;
-    }
+    // Markers: ovulation, and the trigger, egg collection, transfer and test day in a treatment cycle.
+    ring.forEach((d, i) => {
+      const m = MARKERS[d.kind];
+      if (!m) return;
+      const [x, y] = polar(cx, cy, R, ang(i) + per / 2);
+      svg += m[0]
+        ? `<circle cx="${x}" cy="${y}" r="11" fill="${m[0]}"/><circle cx="${x}" cy="${y}" r="3.6" fill="${m[1]}"/>`
+        : `<circle cx="${x}" cy="${y}" r="10" fill="${COL.bg}" stroke="${m[1]}" stroke-width="3" stroke-dasharray="4 3"/>`;
+    });
     // Period drop at the start and the arrow back into the next cycle.
     const [dx, dy] = polar(cx, cy, R + SW / 2 + 16, -90 - 1);
     svg += `<path transform="translate(${dx - 9} ${dy - 13})" d="M9 0C9 0 0 10.5 0 16a9 9 0 0 0 18 0C18 10.5 9 0 9 0z" fill="${COL.red}"/>`;
@@ -233,6 +268,17 @@ class ClueCycleCard extends HTMLElement {
       : ["mdi:water", COL.red, "Next period", fmtDay(p.next_period), p.days_until_period ? `in ${plural(p.days_until_period, "day")}` : "today"]);
     if (p.fertile_start) facts.push(["mdi:egg-outline", COL.blue, "Fertile window", `${fmtDay(p.fertile_start)} – ${fmtDay(p.fertile_end)}`]);
     if (p.ovulation) facts.push(["mdi:circle-double", COL.blueLight, "Ovulation", fmtDay(p.ovulation)]);
+    const t = ov.treatment;
+    if (t) {
+      facts.push(["mdi:needle", TX.collection, esc(t.type_label + (t.protocol_label ? ` · ${t.protocol_label}` : "")), `Day ${t.day}`]);
+      const nd = ov.next_dose;
+      if (nd) facts.push(["mdi:bell-ring-outline", TX.stim, "Next dose",
+        esc(`${nd.name}${nd.dose != null ? ` ${fmtNum(nd.dose)} ${nd.unit || ""}` : ""}`), `${nd.date === this._today ? "today" : "tomorrow"} ${nd.time}`]);
+      const ahead = (dd) => dd && dd >= this._today;
+      const next = [["Egg collection", ahead(t.collection) ? t.collection : ahead(t.expected_collection) ? t.expected_collection : null],
+        ["Transfer", ahead(t.transfer) ? t.transfer : null], ["Blood test", ahead(t.test_date) ? t.test_date : null]].find(([, dd]) => dd);
+      if (next) facts.push(["mdi:calendar-star", TX.test, next[0], fmtDay(next[1])]);
+    }
     return `
       <div class="today">
         <div class="ring-wrap">${this._ringSvg() || `<div class="ring-empty"></div>`}
@@ -256,8 +302,7 @@ class ClueCycleCard extends HTMLElement {
       const day = iso(addDays(sel, i));
       const c = this._cal[day] || { kind: "normal", dots: [] };
       const isToday = day === this._today, isSel = day === this._selected, future = day > this._today;
-      const bg = c.kind === "period" ? COL.red : c.kind === "period_predicted" ? "rgba(232,71,63,0.22)"
-        : c.kind === "fertile" ? COL.blue : (c.kind === "fertile_peak" || c.kind === "ovulation") ? COL.blueDark : COL.surface2;
+      const bg = DAY_BG[c.kind] || COL.surface2;
       cells.push(`<button class="day ${isSel ? "sel" : ""} ${future ? "future" : ""}" data-action="select" data-date="${day}" style="background:${bg}">
         <span class="dots">${(c.dots || []).slice(0, 3).map((col) => `<i style="background:${col}"></i>`).join("")}</span>
         ${c.kind === "ovulation" ? `<span class="ovdot"></span>` : ""}
@@ -276,11 +321,14 @@ class ClueCycleCard extends HTMLElement {
   _log() {
     const log = this._days[this._selected] || {};
     const title = this._selected === this._today ? "Today" : fmtLong(this._selected);
-    const sections = this._cats.map((cat) => {
-      const value = log[cat.id];
-      const isOn = (opt) => (Array.isArray(value) ? value.includes(opt) : value === opt);
-      return `<section><h3>${esc(cat.label)}</h3><div class="chips">${cat.options.map((o) => this._chip(cat, o, isOn(o.id))).join("")}</div></section>`;
-    }).join("");
+    const tracking = this._ov.treatment_tracking && this._tx;
+    const parts = [];
+    for (const cat of this._cats) {
+      if (cat.treatment) continue;
+      parts.push(this._catSection(cat, log));
+      if (cat.id === "sex" && tracking) parts.push(this._treatmentLog(log));
+    }
+    const sections = parts.join("");
     const tagsOn = log.tags || [];
     const tags = `<section><div class="h3row"><h3>My tags</h3>${this._canEdit ? `<button class="link" data-action="newtag"><ha-icon icon="mdi:plus"></ha-icon>Create new tag</button>` : ""}</div>
       ${this._newTag ? `<div class="newtag"><input class="tag-input" placeholder="Tag name" maxlength="40"><button class="btn" data-action="savetag">Add</button><button class="btn ghost" data-action="canceltag">Cancel</button></div>` : ""}
@@ -290,6 +338,56 @@ class ClueCycleCard extends HTMLElement {
     const note = `<section><h3>Notes</h3><textarea class="note" ${this._canEdit ? "" : "disabled"} placeholder="Anything else about today?" maxlength="2000">${esc(log.note || "")}</textarea></section>`;
     const by = log.updated_by_name ? `<p class="muted small">Last updated by ${esc(log.updated_by_name)}${log.updated_at ? ` · ${new Date(log.updated_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}` : ""}</p>` : "";
     return `${this._strip()}<div class="log"><h2>${esc(title)}</h2>${by}${sections}${tags}${note}</div>`;
+  }
+
+  _catSection(cat, log) {
+    const value = log[cat.id];
+    const isOn = (opt) => (Array.isArray(value) ? value.includes(opt) : value === opt);
+    return `<section><h3>${esc(cat.label)}</h3><div class="chips">${cat.options.map((o) => this._chip(cat, o, isOn(o.id))).join("")}</div></section>`;
+  }
+
+  _medOptions(selected) {
+    const groups = {};
+    for (const m of this._tx.meds) (groups[m.kind] ||= []).push(m);
+    return Object.entries(groups).map(([k, ms]) => `<optgroup label="${esc(this._tx.kinds[k] || k)}">${ms.map((m) =>
+      `<option value="${esc(m.id)}" ${m.id === selected ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</optgroup>`).join("");
+  }
+
+  _unitOptions(selected) {
+    return ["", ...this._tx.units].map((u) => `<option value="${esc(u)}" ${u === (selected || "") ? "selected" : ""}>${esc(u || "unit")}</option>`).join("");
+  }
+
+  _lastMed() {
+    // The medicine logged most recently on or before the selected day, so the form starts on it.
+    const day = Object.keys(this._days || {}).filter((d) => d <= this._selected && (this._days[d].meds || []).length).sort().pop();
+    const meds = day ? this._days[day].meds : [];
+    const m = meds.length && this._txMeds[meds[meds.length - 1].med];
+    return m || this._tx.meds[0];
+  }
+
+  _doseText(d) {
+    const m = this._txMeds[d.med] || { name: d.med };
+    return `${m.name}${d.dose != null ? ` ${fmtNum(d.dose)} ${d.unit || ""}` : ""}`.trim();
+  }
+
+  _treatmentLog(log) {
+    const chips = this._catSection(this._catById.treatment, log);
+    const doses = (log.meds || []).map((d) => `<div class="dose"><ha-icon icon="mdi:needle" style="color:${TX.collection}"></ha-icon>
+      <span class="grow"><b>${esc(this._doseText(d))}</b></span><span class="muted">${esc(d.time || "")}</span>
+      ${this._canEdit ? `<button class="x" data-action="dosedel" data-dose="${esc(d.id)}" title="Remove this dose"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</div>`).join("");
+    const first = this._lastMed();
+    const form = this._canEdit ? `<div class="form-row">
+      <select class="f-med" data-change="medpick">${this._medOptions(first && first.id)}</select>
+      <input class="f-dose" type="number" min="0" step="any" placeholder="Dose" inputmode="decimal">
+      <select class="f-unit">${this._unitOptions(first && first.unit)}</select>
+      <input class="f-time" type="time" value="${this._selected === this._today ? hhmm(new Date()) : ""}">
+      <button class="btn" data-action="doseadd">Add dose</button></div>` : "";
+    const res = log.results || {};
+    const results = `<div class="results">${this._tx.results.map((f) => `<label class="res"><span>${esc(f.label)}</span>
+      <input type="number" min="0" step="${f.kind === "int" ? 1 : "any"}" inputmode="decimal" data-change="result" data-key="${f.id}" value="${fmtNum(res[f.id])}" ${this._canEdit ? "" : "disabled"}>
+      <em>${esc(f.unit)}</em></label>`).join("")}</div>`;
+    return `${chips}<section><h3>Medicines</h3>${doses || `<p class="muted small">No doses logged on this day.</p>`}${form}</section>
+      <section><h3>Results</h3><p class="muted small">Scan, blood test and lab numbers. Leave anything you didn't get blank.</p>${results}</section>`;
   }
 
   _calendarView() {
@@ -310,7 +408,9 @@ class ClueCycleCard extends HTMLElement {
         <button class="icon" data-action="month" data-step="1"><ha-icon icon="mdi:chevron-right"></ha-icon></button></div>
       <div class="cal-grid">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((w) => `<div class="wd">${w}</div>`).join("")}${cells.join("")}</div>
       <div class="legend"><span><i style="background:${COL.red}"></i>Period</span><span><i class="pred"></i>Predicted period</span>
-        <span><i style="background:${COL.blue}"></i>Fertile window</span><span><i style="background:${COL.blueDark}"></i>Peak / ovulation</span></div></div>`;
+        <span><i style="background:${COL.blue}"></i>Fertile window</span><span><i style="background:${COL.blueDark}"></i>Peak / ovulation</span>
+        ${this._ov.treatment_tracking ? `<span><i style="background:${TX.stim}"></i>Stimulation</span><span><i style="background:${TX.collection}"></i>Egg collection</span>
+        <span><i style="background:${TX.transfer}"></i>Transfer</span><span><i style="background:${TX.tww}"></i>Waiting to test</span><span><i style="background:${TX.test}"></i>Test day</span>` : ""}</div></div>`;
   }
 
   _ringIcon(fraction, color, dots = 0) {
@@ -337,7 +437,10 @@ class ClueCycleCard extends HTMLElement {
     const rows = [`<div class="frow"><b>Average</b>${bar(avgRow)}</div>`]
       .concat(recent.slice().reverse().map((c) => `<div class="frow"><span>${fmtDay(c.start)}</span>${bar(c.flows)}</div>`));
     const maxLen = Math.max(35, ...done.filter((c) => !c.gap).map((c) => c.length));
-    const history = done.slice(-12).reverse().map((c) => c.gap
+    const history = done.slice(-12).reverse().map((c) => c.treatment && !c.gap
+      ? `<div class="hrow"><span>${fmtDay(c.start)}</span>
+      <div class="hbar"><span class="p" style="width:${(c.period_length / maxLen) * 100}%"></span><span class="r" style="background:${TX.collection};width:${(Math.max(0, Math.min(c.length, maxLen) - c.period_length) / maxLen) * 100}%"></span></div><b>${c.length}d</b></div>`
+      : c.gap
       ? `<div class="hrow gap"><span>${fmtDay(c.start)} ${parse(c.start).getFullYear()}</span><div class="muted small">Nothing logged for ${c.length} days, so this isn't counted</div><b class="muted">gap</b></div>`
       : `<div class="hrow"><span>${fmtDay(c.start)}</span>
       <div class="hbar"><span class="p" style="width:${(c.period_length / maxLen) * 100}%"></span><span class="r" style="width:${((c.length - c.period_length) / maxLen) * 100}%"></span></div><b>${c.length}d</b></div>`).join("");
@@ -352,7 +455,8 @@ class ClueCycleCard extends HTMLElement {
       <div class="panel legend-flow">${Object.entries(FLOW_LABEL).map(([k, l]) => `<span><i style="background:${FLOW_COL[k]}"></i>${l}</span>`).join("")}</div>
       <div class="panel flows">${rows.join("")}<div class="frow axis"><span></span><div class="fbar" style="grid-template-columns:repeat(${maxDays},1fr)">${Array.from({ length: maxDays }, (_, i) => `<em>${i === 0 ? "Day 1" : `D${i + 1}`}</em>`).join("")}</div></div></div>
       <h2>Cycle history</h2>
-      <div class="panel history">${history || `<p class="muted">No complete cycles yet.</p>`}</div>
+      <div class="panel history">${history || `<p class="muted">No complete cycles yet.</p>`}
+        ${done.some((c) => c.treatment) ? `<p class="muted small"><i class="sw" style="background:${TX.collection}"></i>Treatment cycles aren't counted in your averages.</p>` : ""}</div>
     </div>`;
   }
 
@@ -378,6 +482,11 @@ class ClueCycleCard extends HTMLElement {
           <div class="seg">${[[false, "Off"], [true, "On"]].map(([v, l]) => `<button class="${sh.expose_entities === v ? "on" : ""}" data-action="expose" data-on="${v}">${l}</button>`).join("")}</div></div>`;
       }
       html += `</section>`;
+      html += this._notifySettings();
+      const tracking = !!this._ov.treatment_tracking;
+      html += `<section class="panel"><h3>Fertility treatment</h3>
+        <div class="share"><span>Track IVF, FET, IUI or egg freezing<br><em class="muted small">Adds a Treatment tab with medicines, dose reminders, results and a summary for your clinic. Natural predictions pause while a treatment cycle runs.</em></span>
+        <div class="seg">${[[false, "Off"], [true, "On"]].map(([v, l]) => `<button class="${tracking === v ? "on" : ""}" data-action="txtoggle" data-on="${v}">${l}</button>`).join("")}</div></div></section>`;
     } else {
       html += `<section class="panel"><h3>Sharing</h3><p class="muted small">${t.role === "edit" ? "You can view and log for this tracker." : "You can view this tracker."} Only its owner can change who has access.</p></section>`;
     }
@@ -397,6 +506,178 @@ class ClueCycleCard extends HTMLElement {
     }
     html += `<p class="muted small tc">Clue Cycle ${CC_VERSION} · unofficial, not affiliated with Clue. Not medical advice and not a method of contraception.</p></div>`;
     return html;
+  }
+
+  _targetChecks(cls, selected) {
+    const targets = (this._sched && this._sched.targets) || [];
+    if (!targets.length) return `<p class="muted small">No phones found. Install the Home Assistant app and sign in as someone who can see this tracker.</p>`;
+    return `<div class="checks">${targets.map((t) => `<label class="check"><input type="checkbox" class="${cls}" value="${esc(t.service)}" ${selected.includes(t.service) ? "checked" : ""}
+      ${cls === "pn-target" ? `data-change="pn"` : ""}>${esc(t.device)} <span class="muted small">${esc(t.user)}</span></label>`).join("")}</div>`;
+  }
+
+  _notifySettings() {
+    const pn = this._ov.phase_notify || { enabled: false, time: "08:00", targets: [], discreet: false };
+    return `<section class="panel"><h3>Cycle notifications</h3>
+      <p class="muted small">A notification when your phase changes, like your fertile window starting or your period being due. It's checked once a day.</p>
+      <div class="share"><span>Notify me</span><div class="seg">${[[false, "Off"], [true, "On"]].map(([v, l]) => `<button class="${pn.enabled === v ? "on" : ""}" data-action="pn" data-on="${v}">${l}</button>`).join("")}</div></div>
+      <label class="field"><span>Time of day</span><input type="time" class="pn-time" value="${esc(pn.time)}" data-change="pn"><em></em></label>
+      <p class="muted small">Send to</p>${this._targetChecks("pn-target", pn.targets)}
+      <label class="check"><input type="checkbox" class="pn-discreet" data-change="pn" ${pn.discreet ? "checked" : ""}>Discreet: only "There's an update on your cycle" on the lock screen</label>
+      ${pn.enabled ? `<button class="btn ghost" data-action="pntest">Send a test</button>` : ""}</section>`;
+  }
+
+  _treatmentView() {
+    const info = this._tx, t = this._ov.treatment, edit = this._canEdit;
+    if (!info) return `<p class="muted">Loading…</p>`;
+    const sel = (cls, options, value, blank) => `<select class="${cls}">${blank ? `<option value="">${esc(blank)}</option>` : ""}${Object.entries(options).map(([k, l]) =>
+      `<option value="${esc(k)}" ${String(k) === String(value ?? "") ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+    const embryo = { 3: "Day 3 embryo", 5: "Day 5 blastocyst", 6: "Day 6 blastocyst" };
+    const kv = (label, value) => (value ? `<div class="kv"><span class="muted">${label}</span><b>${value}</b></div>` : "");
+    let html = `<div class="settings">`;
+    if (t) {
+      html += `<section class="panel"><h3>${esc(t.type_label)}${t.protocol_label ? ` · ${esc(t.protocol_label)}` : ""}</h3>
+        <p class="big2">${esc(t.headline)}</p><p class="muted">${esc(t.sub)}</p>
+        <div class="kvs">${kv("Started", fmtDay(t.start))}${kv("Stimulation", t.stim_start ? `from ${fmtDay(t.stim_start)} · ${plural(t.stim_days, "day")}` : "")}
+          ${kv("Trigger", t.trigger && fmtDay(t.trigger))}${kv("Egg collection", t.collection ? fmtDay(t.collection) : t.expected_collection ? `${fmtDay(t.expected_collection)} (expected)` : "")}
+          ${kv("Transfer", t.transfer && fmtDay(t.transfer))}${kv("Blood test", t.test_date && fmtDay(t.test_date))}</div>
+        <p class="muted small">Log doses, scans and procedures on the Track tab. The dates above fill in from what you log.</p>
+        ${edit ? `<div class="form-grid">
+          <label>Protocol ${sel("t-protocol", info.protocols, t.protocol, "Not set")}</label>
+          <label>Embryo ${sel("t-embryo", embryo, t.embryo_day, "Not set")}</label>
+          <label>Blood test date${t.test_date && !this._summaryTest(t) ? ` (worked out as ${fmtDay(t.test_date)})` : ""} <input type="date" class="t-test" value="${esc(this._summaryTest(t))}"></label>
+          <label>Note <input class="t-note" maxlength="2000" value="${esc(t.note || "")}"></label></div>
+          <button class="btn ghost" data-action="txsave" data-id="${esc(t.id)}">Save</button>
+          <div class="form-grid end">
+          <label>Outcome ${sel("t-outcome", info.outcomes, "", "Choose…")}</label>
+          <label>Last day <input type="date" class="t-end" value="${this._today}"></label></div>
+          <button class="btn" data-action="txend" data-id="${esc(t.id)}">End this cycle</button>` : ""}</section>`;
+    } else if (edit) {
+      html += `<section class="panel"><h3>Start a treatment cycle</h3>
+        <p class="muted small">While it runs, the ring follows the treatment instead of natural predictions, and this cycle is left out of your averages.</p>
+        <div class="form-grid">
+          <label>Treatment ${sel("t-type", info.types, "ivf")}</label>
+          <label>Protocol ${sel("t-protocol", info.protocols, "", "Not set")}</label>
+          <label>First day <input type="date" class="t-start" value="${this._today}"></label>
+          <label>Embryo ${sel("t-embryo", embryo, "", "Not set")}</label>
+          <label>Blood test date <input type="date" class="t-test"></label></div>
+        <button class="btn" data-action="txstart">Start</button></section>`;
+    } else {
+      html += `<section class="panel"><h3>No treatment cycle running</h3><p class="muted small">Only people who can edit this tracker can start one.</p></section>`;
+    }
+    if (edit) html += this._remindersPanel() + this._medsPanel();
+    html += this._summaryPanel();
+    html += `<p class="muted small tc">Always follow your clinic's instructions. Clue Cycle only keeps track and is not medical advice.</p></div>`;
+    return html;
+  }
+
+  _summaryTest(t) {
+    const rec = (this._tx.cycles || []).find((c) => c.id === t.id);
+    return (rec && rec.test_date) || "";
+  }
+
+  _remindersPanel() {
+    const sc = this._sched || { schedules: [], targets: [] };
+    const tname = (svc) => (sc.targets.find((x) => x.service === svc) || { device: svc }).device;
+    const rows = sc.schedules.map((r) => `<div class="sched"><div class="grow"><b>${esc(r.time)}</b> ${esc(this._doseText(r))}
+        <div class="muted small">${fmtDay(r.start)}${r.end ? ` – ${fmtDay(r.end)}` : " onwards"} · ${esc(r.targets.map(tname).join(", "))}${r.discreet ? " · discreet" : ""}</div></div>
+      <div class="seg">${[[false, "Off"], [true, "On"]].map(([v, l]) => `<button class="${r.enabled === v ? "on" : ""}" data-action="schedtoggle" data-id="${esc(r.id)}" data-on="${v}">${l}</button>`).join("")}</div>
+      <button class="btn ghost" data-action="schedtest" data-id="${esc(r.id)}">Test</button>
+      <button class="x" data-action="scheddel" data-id="${esc(r.id)}" title="Delete this reminder"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("");
+    const first = this._lastMed();
+    return `<section class="panel"><h3>Dose reminders</h3>
+      <p class="muted small">A notification at dose time with Done and Snooze buttons. Done logs the dose for you. If it isn't logged within 30 minutes, it asks once more.</p>
+      ${rows || `<p class="muted small">No reminders yet.</p>`}
+      <h4>Add a reminder</h4>
+      <div class="form-row"><select class="s-med" data-change="medpick">${this._medOptions(first && first.id)}</select>
+        <input class="s-dose" type="number" min="0" step="any" placeholder="Dose" inputmode="decimal">
+        <select class="s-unit">${this._unitOptions(first && first.unit)}</select>
+        <input class="s-time" type="time" value="19:00"></div>
+      <div class="form-grid"><label>First day <input type="date" class="s-start" value="${this._today}"></label>
+        <label>Last day (optional) <input type="date" class="s-end"></label></div>
+      <p class="muted small">Send to</p>${this._targetChecks("s-target", sc.targets.length === 1 ? [sc.targets[0].service] : [])}
+      <label class="check"><input type="checkbox" class="s-discreet">Discreet: only "Time for your 19:00 dose" on the lock screen</label>
+      <label class="check"><input type="checkbox" class="s-follow" checked>Ask again after 30 minutes if it isn't logged</label>
+      <button class="btn" data-action="schedadd">Add reminder</button></section>`;
+  }
+
+  _medsPanel() {
+    const custom = this._tx.meds.filter((m) => m.custom);
+    const kinds = Object.entries(this._tx.kinds).map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join("");
+    return `<section class="panel"><h3>Your medicines</h3>
+      <p class="muted small">Common medicines are already in the list. Add anything else your clinic prescribes.</p>
+      ${custom.map((m) => `<div class="dose"><span class="grow"><b>${esc(m.name)}</b> <span class="muted small">${esc(this._tx.kinds[m.kind] || m.kind)}${m.unit ? ` · ${esc(m.unit)}` : ""}</span></span>
+        <button class="x" data-action="meddel" data-med="${esc(m.id)}" title="Remove"><ha-icon icon="mdi:close"></ha-icon></button></div>`).join("")}
+      <div class="form-row"><input class="m-name" maxlength="40" placeholder="Name"><select class="m-kind">${kinds}</select>
+        <select class="m-unit">${this._unitOptions("")}</select><button class="btn ghost" data-action="medadd">Add medicine</button></div></section>`;
+  }
+
+  _summaryPanel() {
+    const list = this._summary || [];
+    if (!list.length) return "";
+    const fields = Object.fromEntries(this._tx.results.map((f) => [f.id, f]));
+    const cards = list.map((c) => {
+      const dates = [["Stimulation", c.stim_start && `${fmtDay(c.stim_start)}, ${plural(c.stim_days, "day")}`], ["Trigger", c.trigger && fmtDay(c.trigger)],
+        ["Egg collection", c.collection && fmtDay(c.collection)], ["Transfer", c.transfer && fmtDay(c.transfer)], ["Blood test", c.test_date && fmtDay(c.test_date)]]
+        .filter(([, v]) => v).map(([l, v]) => `<span><span class="muted">${l}</span> ${v}</span>`).join("");
+      const meds = c.medicines.map((m) => `<tr><td>${esc(m.name)}</td><td>${plural(m.days, "day")}</td><td>${fmtDay(m.first)} – ${fmtDay(m.last)}</td>
+        <td>${esc(Object.entries(m.totals).map(([u, v]) => `${fmtNum(v)} ${u}`).join(", "))}</td></tr>`).join("");
+      const results = Object.entries(c.results).map(([k, vals]) => `<span><span class="muted">${esc((fields[k] || { label: k }).label)}</span>
+        ${esc(vals.map((v) => `${fmtNum(v.value)}${fields[k] && fields[k].unit ? ` ${fields[k].unit}` : ""}${vals.length > 1 ? ` (${fmtDay(v.date)})` : ""}`).join(", "))}</span>`).join("");
+      return `<div class="sum"><div class="sum-h"><b>${esc(c.type_label)}</b>${c.protocol_label ? ` · ${esc(c.protocol_label)}` : ""}
+          <span class="muted">${fmtDay(c.start)} ${parse(c.start).getFullYear()}${c.end ? ` – ${fmtDay(c.end)}` : " – now"}</span>
+          ${c.outcome ? `<span class="badge">${esc(this._tx.outcomes[c.outcome] || c.outcome)}</span>` : ""}
+          ${this._canEdit && c.end ? `<button class="x" data-action="txdel" data-id="${esc(c.id)}" title="Delete this treatment cycle"><ha-icon icon="mdi:delete-outline"></ha-icon></button>` : ""}</div>
+        ${dates ? `<div class="sum-line">${dates}</div>` : ""}
+        ${meds ? `<table><thead><tr><th>Medicine</th><th>Days</th><th>Dates</th><th>Total</th></tr></thead><tbody>${meds}</tbody></table>` : ""}
+        ${results ? `<div class="sum-line">${results}</div>` : ""}${c.note ? `<p class="muted small">${esc(c.note)}</p>` : ""}</div>`;
+    }).join("");
+    return `<section class="panel"><div class="h3row"><h3>Summary for your clinic</h3>
+      <span><button class="btn ghost" data-action="txcopy">Copy</button> <button class="btn ghost" data-action="txprint">Print or PDF</button></span></div>${cards}</section>`;
+  }
+
+  _summaryText() {
+    const fields = Object.fromEntries(this._tx.results.map((f) => [f.id, f]));
+    return (this._summary || []).map((c) => [
+      `${c.type_label}${c.protocol_label ? ` (${c.protocol_label})` : ""}: ${c.start} to ${c.end || "now"}${c.outcome ? `, ${this._tx.outcomes[c.outcome] || c.outcome}` : ""}`,
+      c.stim_start ? `Stimulation from ${c.stim_start}, ${c.stim_days} days` : "", c.trigger ? `Trigger ${c.trigger}` : "",
+      c.collection ? `Egg collection ${c.collection}` : "", c.transfer ? `Transfer ${c.transfer}` : "", c.test_date ? `Blood test ${c.test_date}` : "",
+      ...c.medicines.map((m) => `${m.name}: ${m.days} days, ${m.first} to ${m.last}${Object.keys(m.totals).length ? `, total ${Object.entries(m.totals).map(([u, v]) => `${fmtNum(v)} ${u}`).join(", ")}` : ""}`),
+      ...Object.entries(c.results).map(([k, vals]) => `${(fields[k] || { label: k }).label}: ${vals.map((v) => `${fmtNum(v.value)}${fields[k] && fields[k].unit ? ` ${fields[k].unit}` : ""} (${v.date})`).join(", ")}`),
+      c.note ? `Note: ${c.note}` : "",
+    ].filter(Boolean).join("\n")).join("\n\n");
+  }
+
+  _printSummary() {
+    const body = esc(this._summaryText()).replace(/\n/g, "<br>");
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
+    document.body.appendChild(frame);
+    const doc = frame.contentWindow.document;
+    doc.open();
+    doc.write(`<!doctype html><title>Treatment summary</title><body style="font:14px/1.5 system-ui,sans-serif;color:#111;padding:24px">
+      <h2>Treatment summary</h2><p style="color:#666">From Clue Cycle, ${new Date().toLocaleDateString()}</p><p>${body}</p></body>`);
+    doc.close();
+    setTimeout(() => { frame.contentWindow.focus(); frame.contentWindow.print(); setTimeout(() => frame.remove(), 1000); }, 200);
+  }
+
+  _val(cls) { const el = this._root.querySelector(`.${cls}`); return el ? el.value : ""; }
+
+  async _try(fn) {
+    try { return await fn(); } catch (err) { this._toast(err.message || String(err)); return null; }
+  }
+
+  async _savePhaseNotify(enabled) {
+    const targets = [...this._root.querySelectorAll(".pn-target:checked")].map((x) => x.value);
+    const pn = this._ov.phase_notify || {};
+    if (enabled === undefined) enabled = !!pn.enabled;
+    if (enabled && !targets.length) {
+      // Turning it on with nothing ticked: default to the owner's own phones.
+      const mine = ((this._sched && this._sched.targets) || []).filter((t) => t.user === (this._hass.user && this._hass.user.name));
+      targets.push(...mine.map((t) => t.service));
+    }
+    const res = await this._try(() => this._ws({ type: "clue_cycle/settings_set", entry_id: this._entryId,
+      phase_notify: { enabled, time: this._val("pn-time") || "08:00", targets, discreet: !!this._root.querySelector(".pn-discreet:checked") } }));
+    if (res) await this._reload();
   }
 
   /* ---------- events ---------- */
@@ -456,6 +737,73 @@ class ClueCycleCard extends HTMLElement {
       if (on && !confirm("Turn on Home Assistant sensors? They're visible to every Home Assistant user and kept in history.")) return;
       const res = await this._ws({ type: "clue_cycle/sharing_set", entry_id: this._entryId, expose_entities: on });
       this._sharing.expose_entities = res.expose_entities; this._render();
+    } else if (a === "doseadd") {
+      const dose = this._val("f-dose"), time = this._val("f-time");
+      const res = await this._try(() => this._ws({ type: "clue_cycle/dose_add", entry_id: this._entryId, date: this._selected,
+        med: this._val("f-med"), dose: dose === "" ? null : Number(dose), unit: this._val("f-unit") || null, time: time || null }));
+      if (res) { this._days[this._selected] = { ...res.log, updated_by_name: this._hass.user?.name }; this._render(); this._scheduleReload(); }
+    } else if (a === "dosedel") {
+      const res = await this._try(() => this._ws({ type: "clue_cycle/dose_remove", entry_id: this._entryId, date: this._selected, dose_id: el.dataset.dose }));
+      if (res) { this._days[this._selected] = res.log; this._render(); this._scheduleReload(); }
+    } else if (a === "txtoggle") {
+      const on = el.dataset.on === "true";
+      if (await this._try(() => this._ws({ type: "clue_cycle/settings_set", entry_id: this._entryId, treatment_tracking: on }))) await this._reload();
+    } else if (a === "pn") {
+      await this._savePhaseNotify(el.dataset.on === "true");
+    } else if (a === "pntest") {
+      const r = await this._try(() => this._ws({ type: "clue_cycle/notify_test", entry_id: this._entryId }));
+      if (r) this._toast(r.sent ? `Test sent to ${plural(r.sent, "phone")}` : "Nothing was sent. Check the phones ticked above.");
+    } else if (a === "txstart") {
+      const embryo = this._val("t-embryo");
+      const r = await this._try(() => this._ws({ type: "clue_cycle/treatment_start", entry_id: this._entryId, treatment_type: this._val("t-type"),
+        protocol: this._val("t-protocol") || null, start: this._val("t-start"), embryo_day: embryo ? Number(embryo) : null, test_date: this._val("t-test") || null }));
+      if (r) await this._reload();
+    } else if (a === "txsave") {
+      const embryo = this._val("t-embryo");
+      const r = await this._try(() => this._ws({ type: "clue_cycle/treatment_update", entry_id: this._entryId, treatment_id: el.dataset.id,
+        protocol: this._val("t-protocol") || null, embryo_day: embryo ? Number(embryo) : null, test_date: this._val("t-test") || null, note: this._val("t-note") }));
+      if (r) { this._toast("Saved"); await this._reload(); }
+    } else if (a === "txend") {
+      const outcome = this._val("t-outcome");
+      if (!outcome) { this._toast("Choose an outcome first"); return; }
+      if (!confirm("End this treatment cycle? Natural predictions resume from the next period.")) return;
+      const r = await this._try(() => this._ws({ type: "clue_cycle/treatment_update", entry_id: this._entryId, treatment_id: el.dataset.id,
+        outcome, end: this._val("t-end") || this._today }));
+      if (r) await this._reload();
+    } else if (a === "txdel") {
+      if (!confirm("Delete this treatment cycle from the summary? The doses and results logged on its days are kept.")) return;
+      if (await this._try(() => this._ws({ type: "clue_cycle/treatment_delete", entry_id: this._entryId, treatment_id: el.dataset.id })) !== null) await this._reload();
+    } else if (a === "txcopy") {
+      await this._try(async () => { await navigator.clipboard.writeText(this._summaryText()); this._toast("Summary copied"); });
+    } else if (a === "txprint") {
+      this._printSummary();
+    } else if (a === "schedadd") {
+      const targets = [...this._root.querySelectorAll(".s-target:checked")].map((x) => x.value);
+      const dose = this._val("s-dose");
+      const r = await this._try(() => this._ws({ type: "clue_cycle/schedule_set", entry_id: this._entryId, med: this._val("s-med"),
+        dose: dose === "" ? null : Number(dose), unit: this._val("s-unit") || null, time: this._val("s-time"), start: this._val("s-start") || null,
+        end: this._val("s-end") || null, targets, discreet: !!this._root.querySelector(".s-discreet:checked"),
+        follow_up: !!this._root.querySelector(".s-follow:checked") }));
+      if (r) await this._reload();
+    } else if (a === "schedtoggle") {
+      const r0 = this._sched.schedules.find((x) => x.id === el.dataset.id);
+      const r = r0 && await this._try(() => this._ws({ type: "clue_cycle/schedule_set", entry_id: this._entryId, schedule_id: r0.id, med: r0.med,
+        dose: r0.dose, unit: r0.unit, time: r0.time, start: r0.start, end: r0.end, targets: r0.targets, discreet: r0.discreet,
+        follow_up: r0.follow_up, enabled: el.dataset.on === "true" }));
+      if (r) await this._reload();
+    } else if (a === "schedtest") {
+      const r = await this._try(() => this._ws({ type: "clue_cycle/notify_test", entry_id: this._entryId, schedule_id: el.dataset.id }));
+      if (r) this._toast(r.sent ? `Test sent to ${plural(r.sent, "phone")}` : "Nothing was sent");
+    } else if (a === "scheddel") {
+      if (!confirm("Delete this reminder?")) return;
+      if (await this._try(() => this._ws({ type: "clue_cycle/schedule_remove", entry_id: this._entryId, schedule_id: el.dataset.id })) !== null) await this._reload();
+    } else if (a === "medadd") {
+      const name = this._val("m-name").trim();
+      if (!name) return;
+      const r = await this._try(() => this._ws({ type: "clue_cycle/med_add", entry_id: this._entryId, name, kind: this._val("m-kind"), unit: this._val("m-unit") }));
+      if (r) await this._reload();
+    } else if (a === "meddel") {
+      if (await this._try(() => this._ws({ type: "clue_cycle/med_remove", entry_id: this._entryId, med: el.dataset.med })) !== null) await this._reload();
     } else if (a === "unlockzip") {
       const pw = this._root.querySelector(".zip-pw")?.value;
       if (pw) await this._previewImport(pw);
@@ -481,6 +829,15 @@ class ClueCycleCard extends HTMLElement {
       const key = el.dataset.key, value = key === "goal" ? el.value : Number(el.value);
       try { await this._ws({ type: "clue_cycle/settings_set", entry_id: this._entryId, [key]: value }); await this._reload(); }
       catch (err) { this._toast(err.message); }
+    } else if (kind === "result") {
+      const v = el.value.trim();
+      await this._set({ results: { [el.dataset.key]: v === "" ? null : Number(v) } });
+    } else if (kind === "medpick") {
+      // Picking a medicine sets its usual unit; no re-render, so the rest of the form is kept.
+      const med = this._txMeds[el.value], unit = el.parentElement.querySelector(".f-unit, .s-unit");
+      if (med && unit) unit.value = med.unit || "";
+    } else if (kind === "pn") {
+      await this._savePhaseNotify();
     } else if (kind === "importfile" && el.files && el.files[0]) {
       const file = el.files[0];
       const content = await new Promise((res, rej) => {
@@ -609,7 +966,7 @@ class ClueCycleCard extends HTMLElement {
     /* Settings */
     .settings { display: grid; gap: 12px; max-width: 640px; margin: 0 auto; }
     .settings h3 { margin-top: 0; }
-    .field { display: grid; grid-template-columns: 1fr 120px 40px; align-items: center; gap: 10px; margin: 8px 0; }
+    .field { display: grid; grid-template-columns: 1fr 150px 40px; align-items: center; gap: 10px; margin: 8px 0; }
     .field select { grid-column: span 2; }
     .field em { color: ${COL.muted}; font-style: normal; }
     .share { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid ${COL.line}; }
@@ -618,6 +975,41 @@ class ClueCycleCard extends HTMLElement {
     .seg button.on { background: ${COL.blueLight}; color: #13233F; font-weight: 600; }
     .preview { background: ${COL.surface}; border-radius: 12px; padding: 10px 14px; margin-top: 10px; }
     .file { color: ${COL.muted}; display: block; margin-top: 8px; }
+    /* Treatment */
+    .k-stim { background: rgba(232,163,61,0.75); color: #fff; } .k-tww { background: rgba(126,98,201,0.6); color: #fff; }
+    .k-trigger { background: ${TX.trigger}; color: #fff; } .k-collection { background: ${TX.collection}; color: #fff; }
+    .k-collection_expected { background: rgba(43,166,160,0.3); border-color: ${TX.collection}; border-style: dashed; }
+    .k-transfer { background: ${TX.transfer}; color: #fff; } .k-test { background: ${TX.test}; color: #fff; }
+    .dose, .sched { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid ${COL.line}; }
+    .grow { flex: 1; min-width: 0; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .form-row > * { flex: 1 1 110px; }
+    .form-row .btn { flex: 0 0 auto; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 10px 0; }
+    .form-grid label { display: grid; gap: 4px; color: ${COL.muted}; font-size: 13px; }
+    .form-grid.end { margin-top: 18px; padding-top: 14px; border-top: 1px solid ${COL.line}; }
+    .form-row input, .form-row select, .form-grid input, .form-grid select, .res input {
+      background: ${COL.surface2}; color: ${COL.text}; border: 1px solid ${COL.line}; border-radius: 10px; padding: 9px 10px; font-size: 15px; min-width: 0; color-scheme: dark; }
+    .results { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 14px; }
+    .res { display: grid; grid-template-columns: 1fr 90px 52px; align-items: center; gap: 8px; font-size: 14px; }
+    .res em { color: ${COL.muted}; font-style: normal; font-size: 12px; }
+    .checks { display: grid; gap: 6px; margin: 4px 0 10px; }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 6px 0; }
+    .check input { width: 18px; height: 18px; accent-color: ${COL.blueLight}; }
+    h4 { margin: 16px 0 4px; font-size: 15px; }
+    .big2 { font-size: 22px; font-weight: 700; margin: 4px 0 2px; }
+    .kvs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 12px 0; }
+    .kv { background: ${COL.surface}; border-radius: 12px; padding: 8px 12px; display: grid; gap: 2px; font-size: 14px; }
+    .sum { border-top: 1px solid ${COL.line}; padding: 12px 0; }
+    .sum-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .sum-h .x { margin-left: auto; }
+    .sum-line { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0; font-size: 14px; }
+    .sum table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0; }
+    .sum th { text-align: left; color: ${COL.muted}; font-weight: 500; padding: 4px 6px; }
+    .sum td { padding: 5px 6px; border-top: 1px solid ${COL.line}; }
+    .sched .seg button { padding: 5px 9px; }
+    .x { background: none; border: 0; color: ${COL.text}; padding: 6px; }
+    i.sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
     @media (min-width: 900px) { .cc-main { padding: 22px 28px 0; } .tabs { margin: 0 -28px; } }
     `;
   }

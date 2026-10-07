@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import engine
 from .entity import CycleEntity
 
-PHASES = ["period", "follicular", "fertile", "fertile_peak", "ovulation", "luteal", "pms", "due", "late", "unknown"]
+PHASES = ["period", "follicular", "fertile", "fertile_peak", "ovulation", "luteal", "pms", "due", "late", "unknown", "treatment"]
 
 
 @dataclass(frozen=True)

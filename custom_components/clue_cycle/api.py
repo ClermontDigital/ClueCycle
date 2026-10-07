@@ -19,15 +19,18 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dis
 from homeassistant.util import dt as dt_util
 
 from . import engine
+from . import treatment as tx
 from .access import (
     CONF_EXPOSE, CONF_SHARING, ROLE_OWNER, SHARE_LEVELS, can_edit, describe, owner_of, role_for, sharing_of,
 )
 from .categories import CATEGORIES, TAG_COLOR
 from .const import (
-    CONF_CYCLE_LENGTH, CONF_GOAL, CONF_LUTEAL_LENGTH, CONF_PERIOD_LENGTH, DOMAIN, GOALS, SIGNAL_UPDATED,
+    CONF_CYCLE_LENGTH, CONF_GOAL, CONF_LUTEAL_LENGTH, CONF_PERIOD_LENGTH, CONF_PHASE_NOTIFY, CONF_TREATMENT, DOMAIN,
+    GOALS, SIGNAL_UPDATED,
 )
 from .importer import ImportError_, PasswordRequired, parse_clue_export
-from .storage import CycleStore, InvalidLog
+from .reminders import Reminders, async_targets, next_dose
+from .storage import TIME_RE, CycleStore, InvalidLog
 
 MAX_IMPORT_BYTES = 25 * 1024 * 1024
 
@@ -57,6 +60,14 @@ def _resolve(hass: HomeAssistant, connection: websocket_api.ActiveConnection, ms
         connection.send_error(msg["id"], "unauthorized", "Only the tracker's owner can change this")
         return None
     return entry, data["store"], role
+
+
+def _reminders(hass: HomeAssistant, entry: ConfigEntry) -> Reminders:
+    return hass.data[DOMAIN][entry.entry_id]["reminders"]
+
+
+def _tracking(entry: ConfigEntry) -> bool:
+    return bool(entry.options.get(CONF_TREATMENT, False))
 
 
 def _today(msg: dict[str, Any]) -> date:
@@ -106,13 +117,17 @@ async def ws_overview(hass: HomeAssistant, connection: websocket_api.ActiveConne
         return
     entry, store, role = res
     settings = settings_for(entry)
-    payload = engine.overview(store.days, settings, _today(msg))
+    payload = engine.overview(store.days, settings, _today(msg), store.tx())
     payload.update({
         "tracker": describe(entry, role),
         "settings": settings.__dict__,
+        "treatment_tracking": _tracking(entry),
+        "next_dose": next_dose(store, dt_util.now()) if _tracking(entry) else None,
         "tags": store.tags,
-        "upcoming": engine.upcoming(store.days, settings, _today(msg)),
+        "upcoming": engine.upcoming(store.days, settings, _today(msg), tx=store.tx()),
     })
+    if role == ROLE_OWNER:
+        payload["phase_notify"] = _reminders(hass, entry).phase_settings()
     connection.send_result(msg["id"], payload)
 
 
@@ -159,7 +174,7 @@ async def ws_calendar(hass: HomeAssistant, connection: websocket_api.ActiveConne
     if (end - start).days > 400:
         connection.send_error(msg["id"], "invalid", "Range too long")
         return
-    connection.send_result(msg["id"], engine.calendar(store.days, settings_for(entry), _today(msg), start, end))
+    connection.send_result(msg["id"], engine.calendar(store.days, settings_for(entry), _today(msg), start, end, store.tx()))
 
 
 @websocket_api.websocket_command({
@@ -229,7 +244,7 @@ async def ws_analysis(hass: HomeAssistant, connection: websocket_api.ActiveConne
         return
     entry, store, _ = res
     settings = settings_for(entry)
-    pred, st, cyc = engine.predict(store.days, settings, _today(msg))
+    pred, st, cyc = engine.predict(store.days, settings, _today(msg), store.tx())
     connection.send_result(msg["id"], {
         "stats": st.as_dict(),
         "prediction": pred.as_dict(),
@@ -281,6 +296,13 @@ async def ws_import(hass: HomeAssistant, connection: websocket_api.ActiveConnect
     vol.Optional(CONF_CYCLE_LENGTH): vol.All(int, vol.Range(min=15, max=60)),
     vol.Optional(CONF_PERIOD_LENGTH): vol.All(int, vol.Range(min=1, max=15)),
     vol.Optional(CONF_LUTEAL_LENGTH): vol.All(int, vol.Range(min=8, max=20)),
+    vol.Optional(CONF_TREATMENT): bool,
+    vol.Optional(CONF_PHASE_NOTIFY): {
+        vol.Required("enabled"): bool,
+        vol.Optional("time", default="08:00"): vol.All(str, vol.Match(TIME_RE)),
+        vol.Optional("targets", default=[]): [str],
+        vol.Optional("discreet", default=False): bool,
+    },
 })
 @websocket_api.async_response
 async def ws_settings_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
@@ -288,12 +310,29 @@ async def ws_settings_set(hass: HomeAssistant, connection: websocket_api.ActiveC
         return
     entry, _, _ = res
     options = dict(entry.options)
-    for key in (CONF_GOAL, CONF_CYCLE_LENGTH, CONF_PERIOD_LENGTH, CONF_LUTEAL_LENGTH):
+    for key in (CONF_GOAL, CONF_CYCLE_LENGTH, CONF_PERIOD_LENGTH, CONF_LUTEAL_LENGTH, CONF_TREATMENT):
         if key in msg:
             options[key] = msg[key]
+    reminders = _reminders(hass, entry)
+    turned_on = False
+    if CONF_PHASE_NOTIFY in msg:
+        cfg = dict(msg[CONF_PHASE_NOTIFY])
+        allowed = {t["service"] for t in await async_targets(hass, entry)}
+        if set(cfg["targets"]) - allowed:
+            connection.send_error(msg["id"], "invalid", "Pick phones belonging to people who can see this tracker")
+            return
+        if cfg["enabled"] and not cfg["targets"]:
+            connection.send_error(msg["id"], "invalid", "Pick at least one phone to notify")
+            return
+        turned_on = cfg["enabled"] and not reminders.phase_settings()["enabled"]
+        options[CONF_PHASE_NOTIFY] = cfg
     hass.config_entries.async_update_entry(entry, options=options)
+    if turned_on:
+        await reminders.async_seed_phase()
+    reminders.async_reschedule()
     _changed(hass, entry.entry_id)
-    connection.send_result(msg["id"], settings_for(entry).__dict__)
+    connection.send_result(msg["id"], {**settings_for(entry).__dict__, CONF_TREATMENT: _tracking(entry),
+                                       CONF_PHASE_NOTIFY: reminders.phase_settings()})
 
 
 @websocket_api.websocket_command({
@@ -365,9 +404,273 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     connection.send_result(msg["id"])
 
 
+# Fertility treatment ---------------------------------------------------------------------------
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/treatment_info", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_treatment_info(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Medicines, the choices for the forms, and the tracker's treatment cycles."""
+    if not (res := _resolve(hass, connection, msg)):
+        return
+    _, store, _ = res
+    connection.send_result(msg["id"], {
+        # Grouped by kind, built-in medicines in the usual clinic order, then the tracker's own.
+        "meds": sorted(store.catalogue().values(), key=lambda m: (list(tx.MED_KINDS).index(m["kind"]), m.get("custom", False))),
+        "kinds": tx.MED_KINDS, "units": tx.UNITS, "types": tx.TREATMENT_TYPES, "protocols": tx.PROTOCOLS,
+        "outcomes": tx.OUTCOMES, "results": tx.RESULT_FIELDS, "cycles": store.treatments,
+    })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/dose_add",
+    vol.Required("entry_id"): str,
+    vol.Required("date"): str,
+    vol.Required("med"): str,
+    vol.Optional("dose"): vol.Any(None, vol.Coerce(float)),
+    vol.Optional("unit"): vol.Any(None, str),
+    vol.Optional("time"): vol.Any(None, str),
+})
+@websocket_api.async_response
+async def ws_dose_add(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    try:
+        day = date.fromisoformat(msg["date"]).isoformat()
+        log = await store.async_add_dose(day, {k: msg.get(k) for k in ("med", "dose", "unit", "time")}, connection.user.id)
+    except (ValueError, InvalidLog) as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], {"date": day, "log": log})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/dose_remove",
+    vol.Required("entry_id"): str,
+    vol.Required("date"): str,
+    vol.Required("dose_id"): str,
+})
+@websocket_api.async_response
+async def ws_dose_remove(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    log = await store.async_remove_dose(msg["date"], msg["dose_id"], connection.user.id)
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], {"date": msg["date"], "log": log})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/med_add",
+    vol.Required("entry_id"): str,
+    vol.Required("name"): str,
+    vol.Required("kind"): str,
+    vol.Optional("unit", default=""): str,
+})
+@websocket_api.async_response
+async def ws_med_add(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    try:
+        med = await store.async_add_med(msg["name"], msg["kind"], msg["unit"])
+    except InvalidLog as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], med)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/med_remove",
+    vol.Required("entry_id"): str,
+    vol.Required("med"): str,
+})
+@websocket_api.async_response
+async def ws_med_remove(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    try:
+        await store.async_remove_med(msg["med"])
+    except InvalidLog as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"])
+
+
+TREATMENT_FIELDS = {
+    vol.Optional("treatment_type"): str,   # stored as "type"; "type" is the WebSocket message type
+    vol.Optional("protocol"): vol.Any(None, str),
+    vol.Optional("start"): str,
+    vol.Optional("end"): vol.Any(None, str),
+    vol.Optional("test_date"): vol.Any(None, str),
+    vol.Optional("embryo_day"): vol.Any(None, int),
+    vol.Optional("outcome"): vol.Any(None, str),
+    vol.Optional("note"): vol.Any(None, str),
+}
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/treatment_start", vol.Required("entry_id"): str, **TREATMENT_FIELDS,
+})
+@websocket_api.async_response
+async def ws_treatment_start(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    fields = _treatment_fields(msg)
+    try:
+        t = await store.async_start_treatment(fields)
+    except InvalidLog as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], t)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/treatment_update", vol.Required("entry_id"): str, vol.Required("treatment_id"): str,
+    **TREATMENT_FIELDS,
+})
+@websocket_api.async_response
+async def ws_treatment_update(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    fields = _treatment_fields(msg)
+    try:
+        t = await store.async_update_treatment(msg["treatment_id"], fields)
+    except InvalidLog as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], t)
+
+
+def _treatment_fields(msg: dict[str, Any]) -> dict[str, Any]:
+    fields = {k: msg[k] for k in ("protocol", "start", "end", "test_date", "embryo_day", "outcome", "note") if k in msg}
+    if "treatment_type" in msg:
+        fields["type"] = msg["treatment_type"]
+    return fields
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/treatment_delete", vol.Required("entry_id"): str, vol.Required("treatment_id"): str,
+})
+@websocket_api.async_response
+async def ws_treatment_delete(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    await store.async_delete_treatment(msg["treatment_id"])
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/treatment_summary", vol.Required("entry_id"): str, vol.Optional("date"): str,
+})
+@websocket_api.async_response
+async def ws_treatment_summary(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg)):
+        return
+    _, store, _ = res
+    connection.send_result(msg["id"], tx.summary(store.treatments, store.days, store.catalogue(), _today(msg)))
+
+
+# Notifications ----------------------------------------------------------------------------------
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/schedules", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_schedules(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Dose reminders, and the phones that can be notified (people who can see the tracker)."""
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    schedules = [{k: v for k, v in s.items() if k != "token"} for s in store.schedules]
+    connection.send_result(msg["id"], {"schedules": schedules, "targets": await async_targets(hass, entry)})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/schedule_set",
+    vol.Required("entry_id"): str,
+    vol.Optional("schedule_id"): vol.Any(None, str),
+    vol.Required("med"): str,
+    vol.Optional("dose"): vol.Any(None, vol.Coerce(float)),
+    vol.Optional("unit"): vol.Any(None, str),
+    vol.Required("time"): str,
+    vol.Optional("start"): vol.Any(None, str),
+    vol.Optional("end"): vol.Any(None, str),
+    vol.Required("targets"): [str],
+    vol.Optional("discreet", default=False): bool,
+    vol.Optional("follow_up", default=True): bool,
+    vol.Optional("enabled", default=True): bool,
+})
+@websocket_api.async_response
+async def ws_schedule_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    allowed = {t["service"] for t in await async_targets(hass, entry)}
+    data = {k: v for k, v in msg.items() if k not in ("type", "entry_id", "id", "schedule_id")}
+    data["id"] = msg.get("schedule_id")
+    try:
+        sched = await store.async_set_schedule(data, allowed, connection.user.id)
+    except InvalidLog as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _reminders(hass, entry).async_reschedule()
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], {k: v for k, v in sched.items() if k != "token"})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/schedule_remove", vol.Required("entry_id"): str, vol.Required("schedule_id"): str,
+})
+@websocket_api.async_response
+async def ws_schedule_remove(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    await store.async_remove_schedule(msg["schedule_id"])
+    _reminders(hass, entry).async_reschedule()
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/notify_test",
+    vol.Required("entry_id"): str,
+    vol.Optional("schedule_id"): str,   # without it, tests the phase notification (owner only)
+})
+@websocket_api.async_response
+async def ws_notify_test(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    need = "edit" if msg.get("schedule_id") else "owner"
+    if not (res := _resolve(hass, connection, msg, need)):
+        return
+    entry, store, _ = res
+    reminders = _reminders(hass, entry)
+    if msg.get("schedule_id"):
+        sched = next((s for s in store.schedules if s["id"] == msg["schedule_id"]), None)
+        if not sched:
+            connection.send_error(msg["id"], "not_found", "No such reminder")
+            return
+        sent = await reminders.async_send(sched, dt_util.now().date(), test=True)
+    else:
+        _, status = reminders.current_phase(dt_util.now().date())
+        sent = await reminders.async_send_phase(status, reminders.phase_settings(), test=True)
+    connection.send_result(msg["id"], {"sent": sent})
+
+
 COMMANDS = (
     ws_trackers, ws_categories, ws_overview, ws_days, ws_calendar, ws_set_day, ws_tag_add, ws_tag_remove,
     ws_analysis, ws_import, ws_settings_set, ws_sharing, ws_sharing_set, ws_subscribe,
+    ws_treatment_info, ws_dose_add, ws_dose_remove, ws_med_add, ws_med_remove, ws_treatment_start,
+    ws_treatment_update, ws_treatment_delete, ws_treatment_summary, ws_schedules, ws_schedule_set,
+    ws_schedule_remove, ws_notify_test,
 )
 
 

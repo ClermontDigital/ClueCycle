@@ -1,3 +1,27 @@
+## 0.3.0
+
+- **Fertility treatment (optional).** Covers IVF, frozen embryo transfer, IUI, egg freezing and
+  ovulation induction. The owner turns it on in Settings, which adds a Treatment tab and a Treatment
+  section on Track.
+  - **Treatment cycles** have a type, protocol, embryo day, blood test date and outcome. While one
+    runs, natural predictions pause and the ring follows the treatment: stimulation days, the
+    trigger, egg collection and transfer markers, and the wait to the blood test. Treatment cycles
+    are left out of the natural averages.
+  - **Logging:** procedure chips, medicine doses (dose, unit, time) and results (follicles, lining,
+    hormone levels, egg and embryo numbers, hCG). Medicines common in Australian clinics are built
+    in, and you can add your own.
+  - **Dose reminders:** a phone notification with Done and Snooze buttons. Done logs the dose. If
+    nothing has been logged 30 minutes later, it asks once more.
+  - **Summary for your clinic:** each medicine's days and total dose, the key dates and the results,
+    with Copy and Print.
+- **Cycle notifications.** Once a day, if your phase has changed, the ring's headline goes to your
+  phone. There's a discreet mode.
+- Notifications only go to the phones of people who can see the tracker. That's checked again on
+  every send.
+- The Log tab is now called **Track**, as in Clue. `view: track` works in the card config, and
+  `log` still does.
+- **Sex and sex drive** now sits directly under Period.
+
 ## 0.2.0
 
 - **Imports Clue's current "Download my data" zip.** The zip is password protected, so the card now

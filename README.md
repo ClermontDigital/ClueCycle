@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
+[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
 
 A period and cycle tracker that looks and works like the Clue app, where every bit of data stays in
 your own Home Assistant. It has the cycle ring, daily logging with the same categories and tags,
@@ -21,9 +21,9 @@ your history across from a Clue data export.
   fertile window, peak days and estimated ovulation. Each logged day carries coloured dots. The
   middle says where you are, for example "Good timing to try to conceive" or "Period expected in 3 days",
   with tips for that phase.
-- 📝 **Daily log, Clue style.** Period flow and collection method, feelings, pain, energy, sleep
-  and sleep quality, mind, social life, cravings, digestion, poop, discharge, sex and sex drive,
-  tests, birth control, skin, hair, exercise, party, leisure, ailments, medication and appointments.
+- 📝 **Track, Clue style.** Log period flow, sex and sex drive, collection method, feelings, pain,
+  energy, sleep and sleep quality, mind, social life, cravings, digestion, poop, discharge, tests,
+  birth control, skin, hair, exercise, party, leisure, ailments, medication and appointments.
   The options use the same names as Clue's own data export. You also get your own **tags** and a
   note for each day. Logging works for any day, past or future.
 - 📅 **Calendar.** A month view with logged and predicted periods, the fertile window and ovulation.
@@ -36,9 +36,15 @@ your history across from a Clue data export.
 - 📥 **Import from Clue.** Choose the zip from Clue's **Download my data** in the card, and enter
   the password from Clue's email. You'll see a preview of what will come across before anything is
   saved.
+- 💉 **Fertility treatment (optional).** For IVF, frozen embryo transfer, IUI, egg freezing and
+  ovulation induction. Log doses, scans, procedures and results; get dose reminders on your phone
+  with a **Done** button; and keep a summary for your clinic. See
+  [Fertility treatment](#fertility-treatment).
+- 🔔 **Cycle notifications.** A phone notification when your phase changes, for example when your
+  fertile window starts or your period is due.
 - 👥 **Multi-user, private by default.** See [Privacy and sharing](#privacy-and-sharing).
-- 🔔 **Optional sensors and a calendar** for automations, such as a reminder the day before your
-  period is due. They are off by default, for a reason explained below.
+- 🧩 **Optional sensors and a calendar** for your own automations. They are off by default, for a
+  reason explained below.
 - 🚀 **HACS ready.** No YAML, no add-on, no cloud, no extra database.
 
 ## Screenshots
@@ -50,9 +56,9 @@ ovulation underneath. Tap the day marker, or "How do you feel today?", to log.
 
 ![The cycle ring](images/today.png)
 
-**Logging a day.** Use the day strip to pick any day. Tap the chips to log, the same way as in Clue.
+**Track.** Use the day strip to pick any day. Tap the chips to log, the same way as in Clue.
 
-![Logging a day](images/log.png)
+![Tracking a day](images/log.png)
 
 **Calendar.**
 
@@ -61,6 +67,17 @@ ovulation underneath. Tap the day marker, or "How do you feel today?", to log.
 **Analysis.**
 
 ![Analysis](images/analysis.png)
+
+**Fertility treatment.** While a treatment cycle runs, the ring follows it. It shows the
+stimulation days (amber), the trigger, egg collection and transfer markers, and the wait to the
+blood test (purple). Underneath, it shows the next dose and the next milestone.
+
+![The ring during IVF](images/treatment-today.png)
+
+**The Treatment tab** has the cycle's key dates, dose reminders, your own medicines and the summary
+for your clinic.
+
+![The Treatment tab](images/treatment.png)
 
 ## Installation
 
@@ -98,7 +115,7 @@ type: custom:clue-cycle-card
 | Option     | Default   | Description                                                                 |
 |------------|-----------|-----------------------------------------------------------------------------|
 | `entry_id` | first one | Which tracker to open, if the person viewing can see more than one.         |
-| `view`     | `today`   | The tab to open on: `today`, `log`, `calendar`, `analysis` or `settings`.   |
+| `view`     | `today`   | The tab to open on: `today`, `track`, `calendar`, `analysis`, `treatment` or `settings`. |
 
 The card works best in a **Panel** view, or a Sections view with the card set to full width.
 
@@ -131,6 +148,53 @@ can read the storage file. Administrators can also see that a tracker exists und
 **Devices & services**, and can change its usual lengths there, though not its data or sharing.
 Choose who has admin and host access accordingly.
 
+## Notifications
+
+Notifications go to the Home Assistant companion app. They can only be sent to the phones of people
+who can see the tracker, and that's checked again every time one is sent. So if you stop sharing with
+someone, their phone stops getting your notifications too.
+
+**Cycle notifications** are set by the owner in **Settings → Cycle notifications**. Once a day, at
+the time you choose (08:00 by default), Clue Cycle checks your phase. If it has changed since the
+last notification, it sends the same words as the middle of the ring, for example "Good timing to try
+to conceive" or "Period expected today". A period you've already logged doesn't get a notification.
+**Discreet** mode shows only "There's an update on your cycle" on the lock screen.
+
+**Dose reminders** are on the Treatment tab and are described below.
+
+## Fertility treatment
+
+Turn this on in **Settings → Fertility treatment** (owner). It adds a **Treatment** tab, and adds a
+**Treatment** section to Track with procedures, medicines and results.
+
+- **Start a treatment cycle** with its type, protocol, first day and, if you know them, the embryo
+  day and blood test date. While it runs, natural predictions pause and the ring follows the
+  treatment instead. When you end it with an outcome, natural predictions carry on from your next
+  period. Treatment cycles are always left out of your natural averages.
+- **Log as you go on Track.** Procedures are chips: baseline and monitoring scans, blood tests,
+  trigger shot, egg collection, fresh or frozen transfer, IUI, pregnancy blood test and pregnancy
+  scan. **Medicines** are doses with an amount, unit and time. **Results** are numbers: follicles,
+  lining, oestradiol, progesterone, LH, eggs collected, mature, fertilised, blastocysts, embryos
+  transferred and frozen, and hCG.
+- **The timeline fills in from what you log.** Stimulation starts with the first stimulation dose.
+  The trigger is the trigger shot or a trigger medicine. Egg collection is expected 2 days after the
+  trigger. The blood test defaults to 9 days after a day 5 or 6 transfer, 11 days after a day 3
+  transfer, or 14 days after an IUI. Clinics vary, so you can set the test date yourself.
+- **Medicines.** Medicines common in Australian clinics are built in: Gonal-f, Puregon, Rekovelle,
+  Elonva, Menopur, Pergoveris, Clomid, letrozole, Orgalutran, Cetrotide, Lucrin, Synarel, Ovidrel,
+  Pregnyl, Decapeptyl, Crinone, Utrogestan, Prolutex, progesterone in oil, Progynova, Estradot,
+  Estrogel, aspirin, Clexane, prednisolone, doxycycline, metformin and prenatal vitamins. Add
+  anything else under **Your medicines**.
+- **Dose reminders.** A reminder has a medicine, dose, time, first and last day, and phones. At
+  the dose time the phones get a notification with **Done** and **Snooze 15 min** buttons. Done logs
+  the dose. If nothing has been logged after 30 minutes, it asks once more. A dose you've already
+  logged doesn't trigger the reminder. Partners who give the injections can be added if the tracker
+  is shared with them. **Discreet** shows only "Time for your 19:00 dose".
+- **Summary for your clinic.** Each treatment cycle shows its dates, each medicine's days and total
+  dose, the procedures and the results. Use **Copy** or **Print or PDF**.
+
+Always follow your clinic's instructions. This only keeps track.
+
 ## Sensors and calendar (optional)
 
 These are created only when the owner turns on **Home Assistant sensors** in the card's settings:
@@ -138,7 +202,7 @@ These are created only when the owner turns on **Home Assistant sensors** in the
 | Entity | What it is |
 |---|---|
 | `sensor.<name>_cycle_day` | Day of the current cycle |
-| `sensor.<name>_cycle_phase` | `period`, `follicular`, `fertile`, `fertile_peak`, `ovulation`, `luteal`, `pms`, `due`, `late` |
+| `sensor.<name>_cycle_phase` | `period`, `follicular`, `fertile`, `fertile_peak`, `ovulation`, `luteal`, `pms`, `due`, `late`, `treatment` |
 | `sensor.<name>_next_period` | Date the next period is expected |
 | `sensor.<name>_days_until_period` | Days until then |
 | `sensor.<name>_ovulation` | Estimated ovulation date |
@@ -203,8 +267,15 @@ role. They're documented here for anyone building something else on top.
 | `clue_cycle/set_day` | edit | Log or clear values on a day |
 | `clue_cycle/tag_add` / `tag_remove` | edit | Manage "My tags" |
 | `clue_cycle/import` | edit | Import a Clue export (`dry_run` for a preview) |
-| `clue_cycle/settings_set` | owner | Goal and usual lengths |
+| `clue_cycle/settings_set` | owner | Goal, usual lengths, treatment tracking and cycle notifications |
 | `clue_cycle/sharing` / `sharing_set` | owner | Who can see or edit, and whether sensors are on |
+| `clue_cycle/treatment_info` | view | Medicines, form choices and treatment cycles |
+| `clue_cycle/treatment_summary` | view | The summary for the clinic |
+| `clue_cycle/dose_add` / `dose_remove` | edit | Log or remove a dose on a day |
+| `clue_cycle/med_add` / `med_remove` | edit | Your own medicines |
+| `clue_cycle/treatment_start` / `treatment_update` / `treatment_delete` | edit | Treatment cycles |
+| `clue_cycle/schedules` / `schedule_set` / `schedule_remove` | edit | Dose reminders, and the phones they can go to |
+| `clue_cycle/notify_test` | edit / owner | A test reminder (edit), or a test cycle notification (owner) |
 
 ## Development
 

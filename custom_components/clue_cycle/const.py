@@ -9,6 +9,8 @@ CONF_GOAL = "goal"              # conceive | track
 CONF_CYCLE_LENGTH = "cycle_length"
 CONF_PERIOD_LENGTH = "period_length"
 CONF_LUTEAL_LENGTH = "luteal_length"
+CONF_TREATMENT = "treatment_tracking"  # show the fertility treatment tab and categories
+CONF_PHASE_NOTIFY = "phase_notify"     # {"enabled", "time", "targets", "discreet"}
 
 GOALS = ["conceive", "track"]
 

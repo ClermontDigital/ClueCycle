@@ -25,7 +25,7 @@
     "step": {
       "init": {
         "title": "Cycle settings",
-        "description": "Who can see this tracker is up to its owner, from the settings in the card.",
+        "description": "Who can see this tracker, notifications and fertility treatment tracking are up to its owner, from the settings in the card.",
         "data": {
           "goal": "Goal",
           "cycle_length": "Usual cycle length",
@@ -48,7 +48,9 @@
   },
   "entity": {
     "sensor": {
-      "cycle_day": {"name": "Cycle day"},
+      "cycle_day": {
+        "name": "Cycle day"
+      },
       "phase": {
         "name": "Cycle phase",
         "state": {
@@ -61,24 +63,47 @@
           "pms": "PMS",
           "due": "Period due",
           "late": "Period late",
-          "unknown": "Unknown"
+          "unknown": "Unknown",
+          "treatment": "Fertility treatment"
         }
       },
-      "next_period": {"name": "Next period"},
-      "days_until_period": {"name": "Days until period"},
-      "ovulation": {"name": "Ovulation"},
-      "fertile_window_start": {"name": "Fertile window start"},
-      "fertile_window_end": {"name": "Fertile window end"},
-      "cycle_length": {"name": "Average cycle length"},
-      "period_length": {"name": "Average period length"},
-      "cycle_variation": {"name": "Cycle variation"}
+      "next_period": {
+        "name": "Next period"
+      },
+      "days_until_period": {
+        "name": "Days until period"
+      },
+      "ovulation": {
+        "name": "Ovulation"
+      },
+      "fertile_window_start": {
+        "name": "Fertile window start"
+      },
+      "fertile_window_end": {
+        "name": "Fertile window end"
+      },
+      "cycle_length": {
+        "name": "Average cycle length"
+      },
+      "period_length": {
+        "name": "Average period length"
+      },
+      "cycle_variation": {
+        "name": "Cycle variation"
+      }
     },
     "binary_sensor": {
-      "on_period": {"name": "On period"},
-      "fertile_window": {"name": "Fertile window"}
+      "on_period": {
+        "name": "On period"
+      },
+      "fertile_window": {
+        "name": "Fertile window"
+      }
     },
     "calendar": {
-      "calendar": {"name": "Cycle"}
+      "calendar": {
+        "name": "Cycle"
+      }
     }
   }
 }

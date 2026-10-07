@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from statistics import mean
 from typing import Any
 
+from . import treatment as tx_
 from .categories import CATEGORY_BY_ID, FLOW_LEVELS, TAG_COLOR
 
 PERIOD_GAP_DAYS = 2        # flow days this close together belong to the same period
@@ -65,6 +66,7 @@ class Cycle:
     start: date
     period: Period
     length: int | None = None  # None for the current, unfinished cycle
+    treatment: bool = False    # inside a fertility treatment cycle, so not a natural cycle
 
     @property
     def gap(self) -> bool:
@@ -76,6 +78,7 @@ class Cycle:
             "start": self.start.isoformat(),
             "length": self.length,
             "gap": self.gap,
+            "treatment": self.treatment,
             "period_length": self.period.length,
             "flows": [self.period.flows.get(self.start + timedelta(days=i)) for i in range(self.period.length)],
         }
@@ -146,9 +149,9 @@ class Stats:
 def stats(cyc: list[Cycle], settings: Settings) -> Stats:
     """Averages over the last few complete cycles, falling back to the settings."""
     # Tracking gaps would wreck the averages, so they're left out like Clue's excluded cycles.
-    complete = [c for c in cyc if c.length and not c.gap][-STATS_CYCLES:]
+    complete = [c for c in cyc if c.length and not c.gap and not c.treatment][-STATS_CYCLES:]
     lengths = [c.length for c in complete if c.length]
-    recent_periods = [c.period.length for c in cyc[-STATS_CYCLES:]]
+    recent_periods = [c.period.length for c in [c for c in cyc if not c.treatment][-STATS_CYCLES:]]
     cycle_len = round(mean(lengths)) if lengths else settings.cycle_length
     period_len = round(mean(recent_periods)) if recent_periods else settings.period_length
     shortest = min(lengths) if lengths else cycle_len
@@ -191,11 +194,33 @@ class Prediction:
         return out
 
 
-def predict(days: dict[str, dict[str, Any]], settings: Settings, today: date) -> tuple[Prediction, Stats, list[Cycle]]:
-    """Predict the current cycle from the logged history."""
+def _tx(tx: dict[str, Any] | None) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Treatment cycles and the medicine catalogue, from the optional ``tx`` argument."""
+    tx = tx or {}
+    return tx.get("cycles") or [], tx.get("meds") or tx_.catalogue(None)
+
+
+def predict(days: dict[str, dict[str, Any]], settings: Settings, today: date,
+            tx: dict[str, Any] | None = None) -> tuple[Prediction, Stats, list[Cycle]]:
+    """Predict the current cycle from the logged history.
+
+    ``tx`` is {"cycles": treatment cycles, "meds": medicine catalogue}. Cycles inside a treatment
+    cycle are left out of the averages, and while one is running there are no natural predictions.
+    """
     cyc = cycles(days)
+    treatments, _ = _tx(tx)
+    for t in treatments:
+        lo, hi = tx_.window(t, today)
+        for c in cyc:
+            if lo <= c.start <= hi:
+                c.treatment = True
     st = stats(cyc, settings)
     current = [c for c in cyc if c.start <= today]
+    running = tx_.active(treatments, today)
+    if running:
+        start = current[-1].start if current else None
+        day = (today - start).days + 1 if start else None
+        return Prediction(start, day, None, None, None, 0, None, None, None, None, "treatment", day or 0), st, cyc
     if not current:
         empty = Prediction(None, None, None, None, None, 0, None, None, None, None, "unknown", st.cycle_length)
         return empty, st, cyc
@@ -347,7 +372,10 @@ def day_dots(log: dict[str, Any] | None, tags: list[str]) -> list[str]:
     colors: list[str] = []
     for key, value in log.items():
         # Period days are already coloured red, so they don't get a dot too.
-        if key in ("period", "note", "updated_by", "updated_at") or not value:
+        if key in ("period", "note", "results", "updated_by", "updated_at") or not value:
+            continue
+        if key == "meds":
+            colors.append(tx_.MED_COLOR)
             continue
         if key == "tags":
             colors.append(TAG_COLOR)
@@ -389,22 +417,33 @@ def ring(pred: Prediction, days: dict[str, dict[str, Any]], st: Stats) -> list[d
     return out
 
 
-def overview(days: dict[str, dict[str, Any]], settings: Settings, today: date) -> dict[str, Any]:
+def overview(days: dict[str, dict[str, Any]], settings: Settings, today: date,
+             tx: dict[str, Any] | None = None) -> dict[str, Any]:
     """Everything the Today view needs in one payload."""
-    pred, st, cyc = predict(days, settings, today)
+    pred, st, cyc = predict(days, settings, today, tx)
+    treatments, meds = _tx(tx)
+    running = tx_.active(treatments, today)
+    if running:
+        tl = tx_.timeline(running, days, meds, today)
+        stat = {"headline": tl["headline"], "sub": tl["sub"], "tips": tl["tips"]}
+        rng = tx_.ring(tl, days, meds, today, day_dots)
+    else:
+        tl, stat, rng = None, status(pred, settings, today, days), ring(pred, days, st)
     return {
         "today": today.isoformat(),
         "prediction": pred.as_dict(),
         "stats": st.as_dict(),
-        "status": status(pred, settings, today, days),
-        "ring": ring(pred, days, st),
+        "status": stat,
+        "ring": rng,
+        "treatment": tl,
         "cycles": [c.as_dict() for c in cyc[-12:]],
     }
 
 
-def upcoming(days: dict[str, dict[str, Any]], settings: Settings, today: date, count: int = 3) -> list[dict[str, Any]]:
+def upcoming(days: dict[str, dict[str, Any]], settings: Settings, today: date, count: int = 3,
+             tx: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Predicted periods, fertile windows and ovulation days for the next few cycles."""
-    pred, st, _ = predict(days, settings, today)
+    pred, st, _ = predict(days, settings, today, tx)
     if not pred.next_period:
         return []
     events = []
@@ -427,13 +466,13 @@ def upcoming(days: dict[str, dict[str, Any]], settings: Settings, today: date, c
 
 
 def calendar(days: dict[str, dict[str, Any]], settings: Settings, today: date,
-             start: date, end: date) -> dict[str, dict[str, Any]]:
+             start: date, end: date, tx: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     """Kind and dots for every day in a range, for the day strip and the month view.
 
     Past cycles get an estimated fertile window (ovulation one luteal phase before the next
     period); the current and future cycles use the predictions.
     """
-    pred, st, cyc = predict(days, settings, today)
+    pred, st, cyc = predict(days, settings, today, tx)
     luteal = settings.luteal_length
     kinds: dict[date, str] = {}
 
@@ -449,7 +488,7 @@ def calendar(days: dict[str, dict[str, Any]], settings: Settings, today: date,
         kinds[day] = "period"
     # Past cycles: estimated ovulation and fertile window from the next cycle's start.
     for c in cyc:
-        if c.length:
+        if c.length and not c.treatment and not c.gap:
             nxt = c.start + timedelta(days=c.length)
             ov = nxt - timedelta(days=luteal)
             mark(ov - timedelta(days=FERTILE_BEFORE), ov + timedelta(days=FERTILE_AFTER), "fertile")
@@ -463,7 +502,7 @@ def calendar(days: dict[str, dict[str, Any]], settings: Settings, today: date,
         if pred.peak_start and pred.ovulation:
             mark(pred.peak_start, pred.ovulation - timedelta(days=1), "fertile_peak", overwrite=True)
             kinds[pred.ovulation] = "ovulation"
-        for ev in upcoming(days, settings, today, count=6):
+        for ev in upcoming(days, settings, today, count=6, tx=tx):
             first, last = date.fromisoformat(ev["start"]), date.fromisoformat(ev["end"])
             if ev["kind"] == "period":
                 mark(first, last, "period_predicted")
@@ -471,6 +510,14 @@ def calendar(days: dict[str, dict[str, Any]], settings: Settings, today: date,
                 mark(first, last, "fertile")
             else:
                 kinds[first] = "ovulation"
+    # Treatment cycles replace the natural colouring with their own.
+    treatments, meds = _tx(tx)
+    for t in treatments:
+        tl = tx_.timeline(t, days, meds, today)
+        t_start = date.fromisoformat(tl["start"])
+        t_end = date.fromisoformat(tl["end"]) if tl["end"] else t_start + timedelta(days=tx_.MAX_RING)
+        mark(t_start, t_end, "normal", overwrite=True)
+        kinds.update(tx_.day_kinds(tl, days, meds, t_end))
     for day, flow in flow_days(days).items():
         kinds[day] = "period"
 

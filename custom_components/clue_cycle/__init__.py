@@ -21,6 +21,7 @@ from homeassistant.loader import async_get_integration
 from .access import CONF_EXPOSE
 from .api import async_register_api
 from .const import CARD_FILENAME, CARD_URL, DOMAIN, SIGNAL_UPDATED
+from .reminders import Reminders
 from .storage import CycleStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,7 +40,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = CycleStore(hass, entry.entry_id)
     await store.async_load()
     expose = bool(entry.options.get(CONF_EXPOSE, False))
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"store": store, "expose": expose}
+    reminders = Reminders(hass, entry, store)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"store": store, "expose": expose, "reminders": reminders}
+    reminders.async_start()
+    entry.async_on_unload(reminders.async_stop)
 
     @callback
     def _midnight(_now) -> None:
