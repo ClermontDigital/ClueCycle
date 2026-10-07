@@ -1,3 +1,8 @@
+## 0.4.1
+
+- The compact widget no longer repeats the next period when the ring's own line already mentions it.
+  It shows the fertile window instead.
+
 ## 0.4.0
 
 - **Track is easier to get around.** Each category folds down to one row that shows what's logged

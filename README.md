@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![Version](https://img.shields.io/badge/version-0.4.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
+[![Version](https://img.shields.io/badge/version-0.4.1-green.svg)](https://github.com/ClermontDigital/ClueCycle)
 
 A period and cycle tracker that looks and works like the Clue app, where every bit of data stays in
 your own Home Assistant. It has the cycle ring, daily logging with the same categories and tags,

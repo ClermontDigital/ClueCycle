@@ -2,7 +2,7 @@
  * Unofficial; not affiliated with Clue or BioWink GmbH.
  * Buildless: plain JS custom element, served by the clue_cycle integration.
  */
-const CC_VERSION = "0.4.0";
+const CC_VERSION = "0.4.1";
 
 const COL = {
   bg: "#1C1B19", surface: "#262422", surface2: "#2F2D2A", line: "#3B3936",
@@ -248,7 +248,12 @@ class ClueCycleCard extends HTMLElement {
         ["Transfer", ahead(t.transfer) ? t.transfer : null], ["Blood test", ahead(t.test_date) ? t.test_date : null]].find(([, dd]) => dd);
       next = nd ? `Next dose ${nd.time} · ${nd.name}` : m ? `${m[0]} ${fmtDay(m[1])}` : t.type_label;
     } else if (p.next_period) {
-      next = p.late_days ? `Period ${plural(p.late_days, "day")} late` : `Next period ${fmtDay(p.next_period)}`;
+      // Don't repeat the ring's sub-line: when it already talks about the period, show the fertile window.
+      const said = /period/i.test(st.sub || "") || /period/i.test(st.headline || "");
+      if (!said) next = p.late_days ? `Period ${plural(p.late_days, "day")} late` : `Next period ${fmtDay(p.next_period)}`;
+      else if (p.fertile_end && p.fertile_start <= this._today && this._today <= p.fertile_end) next = `Fertile until ${fmtDay(p.fertile_end)}`;
+      else if (p.fertile_start && p.fertile_start > this._today) next = `Fertile from ${fmtDay(p.fertile_start)}`;
+      else next = `Period due ${fmtDay(p.next_period)}`;
     }
     const nav = this._config.navigation_path ? `data-action="open" role="button" tabindex="0"` : "";
     this._main.innerHTML = `<div class="mini ${nav ? "nav" : ""}" ${nav}>
