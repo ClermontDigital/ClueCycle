@@ -2,7 +2,7 @@
  * Unofficial; not affiliated with Clue or BioWink GmbH.
  * Buildless: plain JS custom element, served by the clue_cycle integration.
  */
-const CC_VERSION = "0.1.0";
+const CC_VERSION = "0.1.1";
 
 const COL = {
   bg: "#1C1B19", surface: "#262422", surface2: "#2F2D2A", line: "#3B3936",

@@ -1,3 +1,9 @@
+## 0.1.1
+
+- Packaging only, no behaviour changes. The manifest keys are now in the order hassfest expects,
+  `hacs.json` only has the keys HACS currently accepts, and LICENSE is the standard Apache-2.0 text,
+  so GitHub detects it. The 0.1.0 tag was cut before these fixes, so its validation run failed.
+
 ## 0.1.0
 
 - First release.
