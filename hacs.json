@@ -1,0 +1,21 @@
+{
+  "name": "Clue Cycle",
+  "render_readme": true,
+  "domains": [
+    "clue_cycle"
+  ],
+  "homeassistant": "2025.1.0",
+  "iot_class": "Local Push",
+  "description": "A private, multi-user period and cycle tracker that looks and works like the Clue app, with every bit of data kept in Home Assistant",
+  "authors": [
+    "@ClermontDigital"
+  ],
+  "topics": [
+    "period-tracker",
+    "cycle",
+    "fertility",
+    "health",
+    "lovelace",
+    "privacy"
+  ]
+}

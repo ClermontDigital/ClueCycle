@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a cycle tracker",
+        "description": "One tracker per person. It's private to its owner until they choose to share it from the card.",
+        "data": {
+          "name": "Name",
+          "owner": "Whose tracker is this? (their Home Assistant user)",
+          "goal": "Goal",
+          "cycle_length": "Usual cycle length",
+          "period_length": "Usual period length"
+        },
+        "data_description": {
+          "cycle_length": "Only used until a few cycles have been logged or imported.",
+          "period_length": "Only used until a few periods have been logged or imported."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "That person already has a tracker."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Cycle settings",
+        "description": "Who can see this tracker is up to its owner, from the settings in the card.",
+        "data": {
+          "goal": "Goal",
+          "cycle_length": "Usual cycle length",
+          "period_length": "Usual period length",
+          "luteal_length": "Luteal phase length"
+        },
+        "data_description": {
+          "luteal_length": "Days from ovulation to the next period. 14 is typical; only change this if you know yours."
+        }
+      }
+    }
+  },
+  "selector": {
+    "goal": {
+      "options": {
+        "conceive": "Trying to conceive",
+        "track": "Track my cycle"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cycle_day": {"name": "Cycle day"},
+      "phase": {
+        "name": "Cycle phase",
+        "state": {
+          "period": "Period",
+          "follicular": "Follicular",
+          "fertile": "Fertile window",
+          "fertile_peak": "Peak fertility",
+          "ovulation": "Ovulation",
+          "luteal": "Luteal",
+          "pms": "PMS",
+          "due": "Period due",
+          "late": "Period late",
+          "unknown": "Unknown"
+        }
+      },
+      "next_period": {"name": "Next period"},
+      "days_until_period": {"name": "Days until period"},
+      "ovulation": {"name": "Ovulation"},
+      "fertile_window_start": {"name": "Fertile window start"},
+      "fertile_window_end": {"name": "Fertile window end"},
+      "cycle_length": {"name": "Average cycle length"},
+      "period_length": {"name": "Average period length"},
+      "cycle_variation": {"name": "Cycle variation"}
+    },
+    "binary_sensor": {
+      "on_period": {"name": "On period"},
+      "fertile_window": {"name": "Fertile window"}
+    },
+    "calendar": {
+      "calendar": {"name": "Cycle"}
+    }
+  }
+}

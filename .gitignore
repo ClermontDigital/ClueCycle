@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Never commit anyone's cycle data or exports
+*.cluedata
+clue*.zip
+measurements*.json
+.env
+*.log
