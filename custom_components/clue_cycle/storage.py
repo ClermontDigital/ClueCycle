@@ -39,6 +39,7 @@ class CycleStore:
         self.meds: list[dict[str, Any]] = []         # the tracker's own medicines, on top of the built-in ones
         self.schedules: list[dict[str, Any]] = []    # dose reminders
         self.notified: dict[str, Any] = {}           # the last phase a notification went out for
+        self.layout: dict[str, list[str]] = {}       # Track tab: category order and hidden categories
 
     async def async_load(self) -> None:
         data = await self._store.async_load() or {}
@@ -48,10 +49,22 @@ class CycleStore:
         self.meds = data.get("meds") or []
         self.schedules = data.get("schedules") or []
         self.notified = data.get("notified") or {}
+        self.layout = data.get("layout") or {}
 
     async def _save(self) -> None:
         await self._store.async_save({"days": self.days, "tags": self.tags, "treatments": self.treatments,
-                                      "meds": self.meds, "schedules": self.schedules, "notified": self.notified})
+                                      "meds": self.meds, "schedules": self.schedules, "notified": self.notified,
+                                      "layout": self.layout})
+
+    async def async_set_layout(self, order: list[str], hidden: list[str]) -> dict[str, list[str]]:
+        """Save the Track tab's category order and hidden categories (shared by everyone who logs)."""
+        known = [c["id"] for c in CATEGORY_BY_ID.values()]
+        order = [c for c in dict.fromkeys(order) if c in known]
+        hidden = [c for c in dict.fromkeys(hidden) if c in known and c != "period"]  # period is always shown
+        async with self._lock:
+            self.layout = {"order": order, "hidden": hidden}
+            await self._save()
+            return self.layout
 
     async def async_set_notified(self, phase: str | None, day: str) -> None:
         async with self._lock:

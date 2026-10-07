@@ -2,7 +2,7 @@
  * Unofficial; not affiliated with Clue or BioWink GmbH.
  * Buildless: plain JS custom element, served by the clue_cycle integration.
  */
-const CC_VERSION = "0.3.0";
+const CC_VERSION = "0.4.0";
 
 const COL = {
   bg: "#1C1B19", surface: "#262422", surface2: "#2F2D2A", line: "#3B3936",
@@ -59,10 +59,12 @@ class ClueCycleCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
     this._view = this._config.view === "track" ? "log" : (this._config.view || "today");
+    // view: mini is a compact widget (ring + headline) for other dashboards; tap opens navigation_path.
+    this._mini = this._view === "mini";
   }
 
   static getStubConfig() { return {}; }
-  getCardSize() { return 14; }
+  getCardSize() { return this._mini ? 2 : 14; }
   getGridOptions() { return { columns: "full", rows: "auto" }; }
 
   set hass(hass) {
@@ -84,7 +86,12 @@ class ClueCycleCard extends HTMLElement {
 
   async _init() {
     this._root = document.createElement("ha-card");
-    this._root.innerHTML = `<style>${this._css()}</style><div class="cc"><div class="cc-main">Loading…</div></div>`;
+    if (this._mini) {
+      this._root.classList.add("cc-mini", `theme-${this._config.theme || "clue"}`);
+      this._root.innerHTML = `<style>${this._miniCss()}</style><div class="cc-main"></div>`;
+    } else {
+      this._root.innerHTML = `<style>${this._css()}</style><div class="cc"><div class="cc-main">Loading…</div></div>`;
+    }
     this.appendChild(this._root);
     this._main = this._root.querySelector(".cc-main");
     this._root.addEventListener("click", (e) => this._onClick(e));
@@ -99,6 +106,7 @@ class ClueCycleCard extends HTMLElement {
       this._catById = Object.fromEntries(this._cats.map((c) => [c.id, c]));
       this._trackers = trackers;
       if (!trackers.length) {
+        if (this._mini) { this._main.innerHTML = `<div class="mini-empty">No cycle tracker shared with you</div>`; return; }
         this._main.innerHTML = `<div class="empty"><ha-icon icon="mdi:lock-outline"></ha-icon><p>No cycle tracker is shared with you yet.</p>
           <p class="muted">Add one under Settings → Devices &amp; services → Clue Cycle, or ask its owner to share it with you.</p></div>`;
         return;
@@ -141,6 +149,11 @@ class ClueCycleCard extends HTMLElement {
       // Past midnight: move "today" along, and the selection with it if it was on today.
       if (this._selected === this._today) this._selected = now;
       this._today = now;
+    }
+    if (this._mini) {
+      this._ov = await this._ws({ type: "clue_cycle/overview", entry_id: this._entryId, date: this._today });
+      this._renderMini();
+      return;
     }
     const [start, end] = this._range();
     const base = { entry_id: this._entryId, date: this._today };
@@ -196,6 +209,73 @@ class ClueCycleCard extends HTMLElement {
       const sel = this._main.querySelector(".strip .day.sel");
       if (sel) sel.scrollIntoView({ block: "nearest", inline: "center" });
     }
+  }
+
+  _renderMini() {
+    const ov = this._ov, ring = ov.ring || [], t = ov.treatment, p = ov.prediction, st = ov.status;
+    const n = ring.length, cx = 50, cy = 50, R = 40, SW = 9, gap = 10, span = 360 - gap, per = n ? span / n : 0, a0 = -90 + gap / 2;
+    const ang = (i) => a0 + i * per;
+    let svg = `<path d="${arcPath(cx, cy, R, a0, a0 + span)}" stroke="var(--mini-track)" stroke-width="${SW}" fill="none" stroke-linecap="round"/>`;
+    const runs = [];
+    ring.forEach((d, i) => {
+      const k = MARKERS[d.kind] ? MARKERS[d.kind][2] : d.kind;
+      if (runs.length && runs[runs.length - 1].k === k) runs[runs.length - 1].end = i; else runs.push({ k, start: i, end: i });
+    });
+    for (const k of ["fertile", "fertile_peak", "stim", "tww", "period_predicted", "period"]) {
+      for (const r of runs.filter((x) => x.k === k)) {
+        const s0 = ang(r.start) + 0.6, e0 = Math.max(s0 + 0.5, ang(r.end + 1) - 0.6);
+        svg += `<path d="${arcPath(cx, cy, R, s0, e0)}" stroke="${k === "period_predicted" ? COL.redLight : KIND_COL[k]}" stroke-opacity="${k === "period_predicted" ? 0.45 : 1}" stroke-width="${SW}" fill="none"/>`;
+      }
+    }
+    ring.forEach((d, i) => {
+      const m = MARKERS[d.kind];
+      if (!m) return;
+      const [x, y] = polar(cx, cy, R, ang(i) + per / 2);
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.6" fill="${m[0] || "var(--mini-bg)"}" stroke="${m[1]}" stroke-width="1.6"/>`;
+    });
+    const ti = ring.findIndex((d) => d.date === this._today);
+    if (ti >= 0) {
+      const [x, y] = polar(cx, cy, R, ang(ti) + per / 2);
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6.5" fill="var(--mini-bg)" stroke="var(--mini-text)" stroke-width="2.4"/>`;
+    }
+    const day = ti >= 0 ? ring[ti].day : (p.cycle_day || "");
+    svg += `<text x="50" y="45" text-anchor="middle" font-size="11" fill="var(--mini-muted)">Day</text>
+      <text x="50" y="63" text-anchor="middle" font-size="22" font-weight="700" fill="var(--mini-text)">${day}</text>`;
+    let next = "";
+    if (t) {
+      const nd = ov.next_dose, ahead = (dd) => dd && dd >= this._today;
+      const m = [["Egg collection", ahead(t.collection) ? t.collection : ahead(t.expected_collection) ? t.expected_collection : null],
+        ["Transfer", ahead(t.transfer) ? t.transfer : null], ["Blood test", ahead(t.test_date) ? t.test_date : null]].find(([, dd]) => dd);
+      next = nd ? `Next dose ${nd.time} · ${nd.name}` : m ? `${m[0]} ${fmtDay(m[1])}` : t.type_label;
+    } else if (p.next_period) {
+      next = p.late_days ? `Period ${plural(p.late_days, "day")} late` : `Next period ${fmtDay(p.next_period)}`;
+    }
+    const nav = this._config.navigation_path ? `data-action="open" role="button" tabindex="0"` : "";
+    this._main.innerHTML = `<div class="mini ${nav ? "nav" : ""}" ${nav}>
+      <svg viewBox="0 0 100 100" class="mini-ring">${svg}</svg>
+      <div class="mini-t"><div class="mini-k">${esc(this._config.title || "Cycle")}</div>
+        <div class="mini-h">${esc(st.headline)}</div><div class="mini-s">${esc(st.sub)}</div>
+        ${next ? `<div class="mini-n">${esc(next)}</div>` : ""}</div></div>`;
+  }
+
+  _miniCss() {
+    return `
+    ha-card.cc-mini { --mini-bg: ${COL.bg}; --mini-text: ${COL.text}; --mini-muted: ${COL.muted}; --mini-track: ${COL.grey};
+      --mini-accent: ${COL.blueLight}; background: var(--mini-bg); color: var(--mini-text); border-radius: 14px; overflow: hidden;
+      font-family: var(--paper-font-body1_-_font-family, Roboto, system-ui, sans-serif); }
+    /* glass: dark navy with a cyan edge, to sit with tron-style dashboards */
+    ha-card.cc-mini.theme-glass { --mini-bg: rgba(4,16,26,.9); --mini-text: #e0fbff; --mini-muted: rgba(224,251,255,.65);
+      --mini-track: rgba(224,251,255,.14); --mini-accent: #5fd3ff; border: 1px solid rgba(0,168,255,.35); border-radius: 4px;
+      box-shadow: 0 0 10px rgba(0,168,255,.12); }
+    .mini { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 7px; }
+    .mini.nav { cursor: pointer; }
+    .mini-ring { width: 72px; height: 72px; flex: 0 0 auto; }
+    .mini-t { min-width: 0; text-align: left; font-family: var(--paper-font-body1_-_font-family, Roboto, system-ui, sans-serif); }
+    .mini-k { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: var(--mini-muted); }
+    .mini-h { font-size: 14px; font-weight: 700; line-height: 1.2; margin-top: 1px; }
+    .mini-s { font-size: 11px; color: var(--mini-muted); line-height: 1.3; }
+    .mini-n { font-size: 11px; color: var(--mini-accent); line-height: 1.3; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mini-empty { padding: 10px 12px; font-size: 12px; color: var(--mini-muted); }`;
   }
 
   _ringSvg() {
@@ -321,14 +401,21 @@ class ClueCycleCard extends HTMLElement {
   _log() {
     const log = this._days[this._selected] || {};
     const title = this._selected === this._today ? "Today" : fmtLong(this._selected);
-    const tracking = this._ov.treatment_tracking && this._tx;
-    const parts = [];
-    for (const cat of this._cats) {
-      if (cat.treatment) continue;
-      parts.push(this._catSection(cat, log));
-      if (cat.id === "sex" && tracking) parts.push(this._treatmentLog(log));
-    }
-    const sections = parts.join("");
+    if (this._editCats) return `${this._strip()}<div class="log"><h2>${esc(title)}</h2>${this._editCategories()}</div>`;
+    const { order, hidden } = this._layout();
+    const section = (id) => (id === "treatment" ? this._treatmentLog(log) : this._catSection(this._catById[id], log));
+    const shown = order.filter((id) => !hidden.has(id));
+    const more = order.filter((id) => hidden.has(id));
+    const tools = `<div class="track-tools"><button class="link" data-action="foldall" data-open="true">Expand all</button>
+      <button class="link" data-action="foldall" data-open="false">Collapse all</button>
+      ${this._canEdit ? `<button class="link" data-action="catedit"><ha-icon icon="mdi:pencil-outline"></ha-icon>Edit categories</button>` : ""}</div>`;
+    const moreLogged = more.filter((id) => this._hasValue(id, log)).length;
+    const moreBlock = more.length ? `<section class="cat more ${this._moreOpen ? "open" : ""}">
+      <button class="cat-h" data-action="more"><span class="cat-l">More categories</span>
+        <span class="cat-s">${moreLogged ? `${moreLogged} logged` : `${more.length} ${more.length === 1 ? "category" : "categories"}`}</span>
+        <ha-icon icon="mdi:chevron-${this._moreOpen ? "up" : "down"}"></ha-icon></button>
+      ${this._moreOpen ? more.map(section).join("") : ""}</section>` : "";
+    const sections = tools + shown.map(section).join("") + moreBlock;
     const tagsOn = log.tags || [];
     const tags = `<section><div class="h3row"><h3>My tags</h3>${this._canEdit ? `<button class="link" data-action="newtag"><ha-icon icon="mdi:plus"></ha-icon>Create new tag</button>` : ""}</div>
       ${this._newTag ? `<div class="newtag"><input class="tag-input" placeholder="Tag name" maxlength="40"><button class="btn" data-action="savetag">Add</button><button class="btn ghost" data-action="canceltag">Cancel</button></div>` : ""}
@@ -340,10 +427,60 @@ class ClueCycleCard extends HTMLElement {
     return `${this._strip()}<div class="log"><h2>${esc(title)}</h2>${by}${sections}${tags}${note}</div>`;
   }
 
+  _layout() {
+    // Category order and hidden categories are saved on the tracker; new categories go at the end.
+    const tracking = !!(this._ov.treatment_tracking && this._tx);
+    const ids = this._cats.map((c) => c.id).filter((id) => id !== "treatment" || tracking);
+    const def = ids.filter((id) => id !== "treatment");
+    if (tracking) def.splice(def.indexOf("sex") + 1, 0, "treatment");
+    const layout = this._ov.layout || {};
+    const saved = (layout.order || []).filter((id) => ids.includes(id));
+    return { order: [...saved, ...def.filter((id) => !saved.includes(id))], hidden: new Set(layout.hidden || []) };
+  }
+
+  _hasValue(id, log) {
+    if (id === "treatment") return !!((log.treatment || []).length || (log.meds || []).length || Object.keys(log.results || {}).length);
+    const v = log[id];
+    return Array.isArray(v) ? v.length > 0 : !!v;
+  }
+
+  _isOpen(id, log) {
+    // What you open or close sticks for this visit; otherwise Period and anything logged that day start open.
+    if (this._fold && id in this._fold) return this._fold[id];
+    return id === "period" || this._hasValue(id, log);
+  }
+
+  _catHeader(id, label, color, summary, open) {
+    return `<button class="cat-h" data-action="fold" data-cat="${id}"><span class="cat-dot" style="background:${color}"></span>
+      <span class="cat-l">${esc(label)}</span><span class="cat-s">${esc(summary)}</span>
+      <ha-icon icon="mdi:chevron-${open ? "up" : "down"}"></ha-icon></button>`;
+  }
+
   _catSection(cat, log) {
     const value = log[cat.id];
     const isOn = (opt) => (Array.isArray(value) ? value.includes(opt) : value === opt);
-    return `<section><h3>${esc(cat.label)}</h3><div class="chips">${cat.options.map((o) => this._chip(cat, o, isOn(o.id))).join("")}</div></section>`;
+    const open = this._isOpen(cat.id, log);
+    const chosen = cat.options.filter((o) => isOn(o.id)).map((o) => o.label).join(", ");
+    return `<section class="cat ${open ? "open" : ""}">${this._catHeader(cat.id, cat.label, cat.color, chosen, open)}
+      ${open ? `<div class="chips">${cat.options.map((o) => this._chip(cat, o, isOn(o.id))).join("")}</div>` : ""}</section>`;
+  }
+
+  _editCategories() {
+    const d = this._editCats, tracking = !!(this._ov.treatment_tracking && this._tx);
+    const shown = d.order.filter((id) => id !== "treatment" || tracking);
+    const rows = shown.map((id, i) => {
+      const cat = this._catById[id];
+      return `<div class="edit-row"><label class="check grow"><input type="checkbox" data-change="catshow" data-cat="${id}"
+          ${d.hidden.includes(id) ? "" : "checked"} ${id === "period" ? "disabled" : ""}>
+          <span class="cat-dot" style="background:${cat.color}"></span>${esc(cat.label)}</label>
+        <button class="x" data-action="catmove" data-cat="${id}" data-step="-1" ${i === 0 ? "disabled" : ""} title="Move up"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+        <button class="x" data-action="catmove" data-cat="${id}" data-step="1" ${i === shown.length - 1 ? "disabled" : ""} title="Move down"><ha-icon icon="mdi:arrow-down"></ha-icon></button></div>`;
+    }).join("");
+    return `<section class="panel"><h3>Edit categories</h3>
+      <p class="muted small">Untick categories you don't use and they move to "More categories" at the bottom of Track, so nothing is lost. Use the arrows to change the order. This is the same for everyone who logs for this tracker.</p>
+      ${rows}
+      <div class="track-tools"><button class="btn" data-action="catsave">Done</button><button class="btn ghost" data-action="catcancel">Cancel</button>
+        <button class="link" data-action="catreset">Reset to the default order</button></div></section>`;
   }
 
   _medOptions(selected) {
@@ -371,7 +508,6 @@ class ClueCycleCard extends HTMLElement {
   }
 
   _treatmentLog(log) {
-    const chips = this._catSection(this._catById.treatment, log);
     const doses = (log.meds || []).map((d) => `<div class="dose"><ha-icon icon="mdi:needle" style="color:${TX.collection}"></ha-icon>
       <span class="grow"><b>${esc(this._doseText(d))}</b></span><span class="muted">${esc(d.time || "")}</span>
       ${this._canEdit ? `<button class="x" data-action="dosedel" data-dose="${esc(d.id)}" title="Remove this dose"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</div>`).join("");
@@ -386,8 +522,14 @@ class ClueCycleCard extends HTMLElement {
     const results = `<div class="results">${this._tx.results.map((f) => `<label class="res"><span>${esc(f.label)}</span>
       <input type="number" min="0" step="${f.kind === "int" ? 1 : "any"}" inputmode="decimal" data-change="result" data-key="${f.id}" value="${fmtNum(res[f.id])}" ${this._canEdit ? "" : "disabled"}>
       <em>${esc(f.unit)}</em></label>`).join("")}</div>`;
-    return `${chips}<section><h3>Medicines</h3>${doses || `<p class="muted small">No doses logged on this day.</p>`}${form}</section>
-      <section><h3>Results</h3><p class="muted small">Scan, blood test and lab numbers. Leave anything you didn't get blank.</p>${results}</section>`;
+    const cat = this._catById.treatment, open = this._isOpen("treatment", log);
+    const summary = [(log.treatment || []).map((x) => (cat.options.find((o) => o.id === x) || { label: x }).label).join(", "),
+      (log.meds || []).length ? plural(log.meds.length, "dose") : "", Object.keys(res).length ? "results" : ""].filter(Boolean).join(" · ");
+    const value = log.treatment || [];
+    return `<section class="cat ${open ? "open" : ""}">${this._catHeader("treatment", cat.label, cat.color, summary, open)}
+      ${open ? `<div class="chips">${cat.options.map((o) => this._chip(cat, o, value.includes(o.id))).join("")}</div>
+      <h4>Medicines</h4>${doses || `<p class="muted small">No doses logged on this day.</p>`}${form}
+      <h4>Results</h4><p class="muted small">Scan, blood test and lab numbers. Leave anything you didn't get blank.</p>${results}` : ""}</section>`;
   }
 
   _calendarView() {
@@ -696,6 +838,11 @@ class ClueCycleCard extends HTMLElement {
     const el = e.target.closest("[data-action]");
     if (!el || el.disabled) return;
     const a = el.dataset.action;
+    if (a === "open") {
+      const path = this._config.navigation_path;
+      if (path) { history.pushState(null, "", path); window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } })); }
+      return;
+    }
     if (a === "view") {
       this._view = el.dataset.view;
       await this._reload();
@@ -737,6 +884,38 @@ class ClueCycleCard extends HTMLElement {
       if (on && !confirm("Turn on Home Assistant sensors? They're visible to every Home Assistant user and kept in history.")) return;
       const res = await this._ws({ type: "clue_cycle/sharing_set", entry_id: this._entryId, expose_entities: on });
       this._sharing.expose_entities = res.expose_entities; this._render();
+    } else if (a === "fold") {
+      const log = this._days[this._selected] || {};
+      this._fold = { ...(this._fold || {}), [el.dataset.cat]: !this._isOpen(el.dataset.cat, log) };
+      this._render();
+    } else if (a === "foldall") {
+      const open = el.dataset.open === "true";
+      this._fold = Object.fromEntries(this._layout().order.map((id) => [id, open]));
+      this._moreOpen = open && this._moreOpen;
+      this._render();
+    } else if (a === "more") {
+      this._moreOpen = !this._moreOpen; this._render();
+    } else if (a === "catedit") {
+      const { order, hidden } = this._layout();
+      this._editCats = { order: [...order], hidden: [...hidden] }; this._render();
+    } else if (a === "catmove") {
+      const d = this._editCats, tracking = !!(this._ov.treatment_tracking && this._tx);
+      const shown = d.order.filter((id) => id !== "treatment" || tracking);
+      const i = shown.indexOf(el.dataset.cat), other = shown[i + Number(el.dataset.step)];
+      if (other) {
+        const a1 = d.order.indexOf(el.dataset.cat), a2 = d.order.indexOf(other);
+        [d.order[a1], d.order[a2]] = [d.order[a2], d.order[a1]];
+        this._render();
+      }
+    } else if (a === "catreset") {
+      this._ov.layout = {}; const { order } = this._layout();
+      this._editCats = { order, hidden: this._editCats.hidden }; this._render();
+    } else if (a === "catcancel") {
+      this._editCats = null; this._render();
+    } else if (a === "catsave") {
+      const r = await this._try(() => this._ws({ type: "clue_cycle/layout_set", entry_id: this._entryId,
+        order: this._editCats.order, hidden: this._editCats.hidden }));
+      if (r) { this._ov.layout = r; this._editCats = null; this._render(); this._scheduleReload(); }
     } else if (a === "doseadd") {
       const dose = this._val("f-dose"), time = this._val("f-time");
       const res = await this._try(() => this._ws({ type: "clue_cycle/dose_add", entry_id: this._entryId, date: this._selected,
@@ -829,6 +1008,9 @@ class ClueCycleCard extends HTMLElement {
       const key = el.dataset.key, value = key === "goal" ? el.value : Number(el.value);
       try { await this._ws({ type: "clue_cycle/settings_set", entry_id: this._entryId, [key]: value }); await this._reload(); }
       catch (err) { this._toast(err.message); }
+    } else if (kind === "catshow") {
+      const d = this._editCats, id = el.dataset.cat;
+      d.hidden = el.checked ? d.hidden.filter((x) => x !== id) : [...d.hidden, id];
     } else if (kind === "result") {
       const v = el.value.trim();
       await this._set({ results: { [el.dataset.key]: v === "" ? null : Number(v) } });
@@ -975,6 +1157,21 @@ class ClueCycleCard extends HTMLElement {
     .seg button.on { background: ${COL.blueLight}; color: #13233F; font-weight: 600; }
     .preview { background: ${COL.surface}; border-radius: 12px; padding: 10px 14px; margin-top: 10px; }
     .file { color: ${COL.muted}; display: block; margin-top: 8px; }
+    /* Track: collapsible categories */
+    .track-tools { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: center; margin: 4px 0 6px; }
+    .track-tools .link { font-size: 14px; }
+    .cat { border-top: 1px solid ${COL.line}; padding: 2px 0; }
+    .cat.open { padding-bottom: 12px; }
+    .cat-h { width: 100%; display: flex; align-items: center; gap: 10px; background: none; border: 0; color: ${COL.text}; padding: 12px 0; text-align: left; }
+    .cat-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+    .cat-l { font-size: 18px; font-weight: 700; flex: 0 0 auto; }
+    .cat-s { flex: 1; min-width: 0; color: ${COL.muted}; font-size: 14px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cat-h ha-icon { color: ${COL.muted}; flex: 0 0 auto; }
+    .cat.more > .cat-h .cat-l { color: ${COL.muted}; }
+    .cat.more .cat { margin-left: 8px; }
+    .edit-row { display: flex; align-items: center; gap: 6px; border-top: 1px solid ${COL.line}; padding: 4px 0; }
+    .edit-row .check { margin: 4px 0; font-size: 16px; }
+    .edit-row .x:disabled { opacity: 0.25; }
     /* Treatment */
     .k-stim { background: rgba(232,163,61,0.75); color: #fff; } .k-tww { background: rgba(126,98,201,0.6); color: #fff; }
     .k-trigger { background: ${TX.trigger}; color: #fff; } .k-collection { background: ${TX.collection}; color: #fff; }

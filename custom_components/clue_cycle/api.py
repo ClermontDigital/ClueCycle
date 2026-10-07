@@ -124,6 +124,7 @@ async def ws_overview(hass: HomeAssistant, connection: websocket_api.ActiveConne
         "treatment_tracking": _tracking(entry),
         "next_dose": next_dose(store, dt_util.now()) if _tracking(entry) else None,
         "tags": store.tags,
+        "layout": store.layout,
         "upcoming": engine.upcoming(store.days, settings, _today(msg), tx=store.tx()),
     })
     if role == ROLE_OWNER:
@@ -404,6 +405,23 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     connection.send_result(msg["id"])
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/layout_set",
+    vol.Required("entry_id"): str,
+    vol.Required("order"): [str],
+    vol.Optional("hidden", default=[]): [str],
+})
+@websocket_api.async_response
+async def ws_layout_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The Track tab's category order and which categories sit under "More categories"."""
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    layout = await store.async_set_layout(msg["order"], msg["hidden"])
+    _changed(hass, entry.entry_id)
+    connection.send_result(msg["id"], layout)
+
+
 # Fertility treatment ---------------------------------------------------------------------------
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/treatment_info", vol.Required("entry_id"): str})
@@ -667,7 +685,7 @@ async def ws_notify_test(hass: HomeAssistant, connection: websocket_api.ActiveCo
 
 COMMANDS = (
     ws_trackers, ws_categories, ws_overview, ws_days, ws_calendar, ws_set_day, ws_tag_add, ws_tag_remove,
-    ws_analysis, ws_import, ws_settings_set, ws_sharing, ws_sharing_set, ws_subscribe,
+    ws_analysis, ws_import, ws_settings_set, ws_sharing, ws_sharing_set, ws_subscribe, ws_layout_set,
     ws_treatment_info, ws_dose_add, ws_dose_remove, ws_med_add, ws_med_remove, ws_treatment_start,
     ws_treatment_update, ws_treatment_delete, ws_treatment_summary, ws_schedules, ws_schedule_set,
     ws_schedule_remove, ws_notify_test,

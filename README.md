@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
+[![Version](https://img.shields.io/badge/version-0.4.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
 
 A period and cycle tracker that looks and works like the Clue app, where every bit of data stays in
 your own Home Assistant. It has the cycle ring, daily logging with the same categories and tags,
@@ -25,7 +25,9 @@ your history across from a Clue data export.
   energy, sleep and sleep quality, mind, social life, cravings, digestion, poop, discharge, tests,
   birth control, skin, hair, exercise, party, leisure, ailments, medication and appointments.
   The options use the same names as Clue's own data export. You also get your own **tags** and a
-  note for each day. Logging works for any day, past or future.
+  note for each day. Logging works for any day, past or future. Each category folds down to one
+  row that shows what's logged, and **Edit categories** hides the ones you don't use and reorders
+  the rest.
 - 📅 **Calendar.** A month view with logged and predicted periods, the fertile window and ovulation.
 - 📊 **Analysis.** Cycle length (and how many recent cycles were typical), cycle variation,
   average period length, period flow per cycle, and cycle history.
@@ -56,7 +58,9 @@ ovulation underneath. Tap the day marker, or "How do you feel today?", to log.
 
 ![The cycle ring](images/today.png)
 
-**Track.** Use the day strip to pick any day. Tap the chips to log, the same way as in Clue.
+**Track.** Use the day strip to pick any day. Each category is one row showing what's logged that day;
+tap it to open the chips. Period, and anything logged that day, start open. **Edit categories** hides the
+categories you don't use under "More categories" and changes the order.
 
 ![Tracking a day](images/log.png)
 
@@ -115,9 +119,25 @@ type: custom:clue-cycle-card
 | Option     | Default   | Description                                                                 |
 |------------|-----------|-----------------------------------------------------------------------------|
 | `entry_id` | first one | Which tracker to open, if the person viewing can see more than one.         |
-| `view`     | `today`   | The tab to open on: `today`, `track`, `calendar`, `analysis`, `treatment` or `settings`. |
+| `view`     | `today`   | The tab to open on: `today`, `track`, `calendar`, `analysis`, `treatment` or `settings`. Or `mini` for the compact widget below. |
+| `title`    | `Cycle`   | `mini` only: the small heading. |
+| `theme`    | `clue`    | `mini` only: `clue`, or `glass` (dark navy with a cyan edge, for tron-style dashboards). |
+| `navigation_path` | none | `mini` only: where tapping the widget goes, for example `/dashboard-cycle/cycle`. |
 
 The card works best in a **Panel** view, or a Sections view with the card set to full width.
+
+**The compact widget.** `view: mini` shows a small ring with the cycle day, the ring's headline and
+the next milestone (next period, or the next dose or procedure during treatment). It's useful on a home
+or wall-panel dashboard. Like the full card, it only shows a tracker that the person looking can see.
+
+```yaml
+type: custom:clue-cycle-card
+view: mini
+theme: glass
+navigation_path: /dashboard-cycle/cycle
+```
+
+![The compact widget](images/mini.png)
 
 ## Privacy and sharing
 
@@ -267,6 +287,7 @@ role. They're documented here for anyone building something else on top.
 | `clue_cycle/set_day` | edit | Log or clear values on a day |
 | `clue_cycle/tag_add` / `tag_remove` | edit | Manage "My tags" |
 | `clue_cycle/import` | edit | Import a Clue export (`dry_run` for a preview) |
+| `clue_cycle/layout_set` | edit | Track tab: category order and hidden categories |
 | `clue_cycle/settings_set` | owner | Goal, usual lengths, treatment tracking and cycle notifications |
 | `clue_cycle/sharing` / `sharing_set` | owner | Who can see or edit, and whether sensors are on |
 | `clue_cycle/treatment_info` | view | Medicines, form choices and treatment cycles |

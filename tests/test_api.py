@@ -164,3 +164,17 @@ async def test_config_flow_creates_private_tracker(hass, hass_admin_user):
     assert result["type"] == "create_entry"
     assert result["data"][CONF_OWNER] == hass_admin_user.id
     assert result["options"][CONF_SHARING] == {}
+
+
+async def test_track_layout_is_shared_and_needs_edit(hass, hass_ws_client, hass_admin_user, hass_read_only_user,
+                                                     hass_read_only_access_token):
+    entry = await _setup(hass, hass_admin_user.id, sharing={hass_read_only_user.id: "view"})
+    client = await hass_ws_client(hass)
+    r = await _ws(client, type=f"{DOMAIN}/layout_set", entry_id=entry.entry_id,
+                  order=["period", "pain", "sex", "nonsense", "pain"], hidden=["party", "period", "nonsense"])
+    assert r["result"] == {"order": ["period", "pain", "sex"], "hidden": ["party"]}
+    ov = await _ws(client, type=f"{DOMAIN}/overview", entry_id=entry.entry_id)
+    assert ov["result"]["layout"]["hidden"] == ["party"]
+    viewer = await hass_ws_client(hass, hass_read_only_access_token)
+    r = await _ws(viewer, type=f"{DOMAIN}/layout_set", entry_id=entry.entry_id, order=["pain"])
+    assert r["error"]["code"] == "unauthorized"

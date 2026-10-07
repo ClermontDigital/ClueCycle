@@ -1,3 +1,14 @@
+## 0.4.0
+
+- **Track is easier to get around.** Each category folds down to one row that shows what's logged
+  that day. Tap it to open the chips. Period, and anything logged that day, start open, and there's
+  Expand all and Collapse all.
+- **Edit categories**, like Clue's tracking options. Hide the categories you don't use and change the
+  order of the rest. Hidden ones move to "More categories" at the bottom, so nothing is lost. The
+  layout is saved on the tracker, so it's the same for everyone who logs.
+- **A compact widget** (`view: mini`) for other dashboards: a small ring, the headline and the next
+  milestone. Tapping it can open the full tracker. There's a `glass` theme for tron-style dashboards.
+
 ## 0.3.0
 
 - **Fertility treatment (optional).** Covers IVF, frozen embryo transfer, IUI, egg freezing and
