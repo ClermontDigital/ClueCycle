@@ -9,6 +9,22 @@ your own Home Assistant. It has the cycle ring, daily logging with the same cate
 predictions for the next period and the fertile window, and Clue's analysis screens. You can bring
 your history across from a Clue data export.
 
+## 🔐 Your data stays yours
+
+**This is the big difference from the Clue app.** With Clue, your cycle history lives on someone
+else's servers, under their terms, and getting it back out means asking for an export. With Clue
+Cycle, every period, symptom, note and test result is stored in **your own Home Assistant**, on
+your own hardware:
+
+- **No account, no cloud, no company in between.** Nothing is sent anywhere. There's no telemetry,
+  no ads, and nobody who can sell, share or be made to hand over your data.
+- **Private even inside your home.** Each tracker is visible only to its owner unless they choose to
+  share it. Not even Home Assistant admins can read it through the app.
+- **It goes where your Home Assistant goes.** It's included in your normal Home Assistant backups,
+  and it doesn't disappear if an app shuts down or changes its pricing.
+- **Bring your history with you.** Import everything from Clue's "Download my data", and keep
+  tracking the way you're used to.
+
 > **Unofficial.** Clue Cycle is not made by, affiliated with or endorsed by Clue or BioWink GmbH.
 > "Clue" is used only to describe what it imitates.
 >
