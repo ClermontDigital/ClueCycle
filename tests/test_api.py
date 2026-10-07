@@ -132,6 +132,18 @@ async def test_import_dry_run_then_real(hass, hass_ws_client, hass_admin_user):
     assert ov["result"]["tags"] == ["TIRED"] and ov["result"]["prediction"]["cycle_day"] == 8
 
 
+async def test_import_asks_for_the_zip_password(hass, hass_ws_client, hass_admin_user):
+    import base64
+    from .test_importer import PROTECTED_ZIP
+    entry = await _setup(hass, hass_admin_user.id)
+    client = await hass_ws_client(hass)
+    content = base64.b64encode(PROTECTED_ZIP).decode()
+    r = await _ws(client, type=f"{DOMAIN}/import", entry_id=entry.entry_id, content=content, dry_run=True)
+    assert not r["success"] and r["error"]["code"] == "password_required"
+    r = await _ws(client, type=f"{DOMAIN}/import", entry_id=entry.entry_id, content=content, password="testpass")
+    assert r["success"] and r["result"]["new_days"] == 2
+
+
 async def test_sensors_only_when_owner_turns_them_on(hass, hass_admin_user):
     await _setup(hass, hass_admin_user.id)
     assert not [s for s in hass.states.async_entity_ids() if "alex" in s]

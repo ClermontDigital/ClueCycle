@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![Version](https://img.shields.io/badge/version-0.1.1-green.svg)](https://github.com/ClermontDigital/ClueCycle)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
 
 A period and cycle tracker that looks and works like the Clue app, where every bit of data stays in
 your own Home Assistant. It has the cycle ring, daily logging with the same categories and tags,
@@ -21,10 +21,11 @@ your history across from a Clue data export.
   fertile window, peak days and estimated ovulation. Each logged day carries coloured dots. The
   middle says where you are, for example "Good timing to try to conceive" or "Period expected in 3 days",
   with tips for that phase.
-- 📝 **Daily log, Clue style.** Period flow and collection method, feelings, pain, energy, sleep,
-  mind, social life, cravings, digestion, poop, discharge, sex and sex drive, tests, skin, hair,
-  exercise, ailments and medication. You also get your own **tags** and a note for each day.
-  Logging works for any day, past or future.
+- 📝 **Daily log, Clue style.** Period flow and collection method, feelings, pain, energy, sleep
+  and sleep quality, mind, social life, cravings, digestion, poop, discharge, sex and sex drive,
+  tests, birth control, skin, hair, exercise, party, leisure, ailments, medication and appointments.
+  The options use the same names as Clue's own data export. You also get your own **tags** and a
+  note for each day. Logging works for any day, past or future.
 - 📅 **Calendar.** A month view with logged and predicted periods, the fertile window and ovulation.
 - 📊 **Analysis.** Cycle length (and how many recent cycles were typical), cycle variation,
   average period length, period flow per cycle, and cycle history.
@@ -32,8 +33,9 @@ your history across from a Clue data export.
   period uses your average cycle length. The fertile window is built from your shortest and longest
   cycles. Ovulation is one luteal phase (14 days, adjustable) before the next period. A late period
   is shown as late; the cycle is not silently moved.
-- 📥 **Import from Clue.** Choose the export file in the card. You'll see a preview of what will
-  come across before anything is saved.
+- 📥 **Import from Clue.** Choose the zip from Clue's **Download my data** in the card, and enter
+  the password from Clue's email. You'll see a preview of what will come across before anything is
+  saved.
 - 👥 **Multi-user, private by default.** See [Privacy and sharing](#privacy-and-sharing).
 - 🔔 **Optional sensors and a calendar** for automations, such as a reminder the day before your
   period is due. They are off by default, for a reason explained below.
@@ -152,16 +154,20 @@ They update as soon as anything is logged, and again at midnight.
 
 ## Importing from Clue
 
-1. In the Clue app, go to **Settings → Data export** and request an export. Clue emails a file,
-   or it may arrive as a `.zip`.
-2. In the card, open **Settings → Import from Clue** and choose the file. Both the older
-   `.cluedata` format and the newer measurements export work, as JSON or zipped.
-3. Check the preview. It shows how many days, the date range, how many tags, and any categories
-   it didn't recognise. Then press **Import**.
+1. In the Clue app, use **Download my data**. Clue emails you a password-protected zip
+   (`ClueDataDownload-<date>.zip`) and the password for it.
+2. In the card, open **Settings → Import from Clue** and choose the zip. When it asks, enter the
+   password from Clue's email. The older `.cluedata` backup and a bare `measurements.json` work too.
+3. Check the preview. It shows how many days, the date range, how many tags, and anything it didn't
+   recognise. Then press **Import**. Only `measurements.json` is read from the zip; the account,
+   subscription and doctor-report files in it are ignored.
+
+Data synced from a wearable (resting heart rate, heart rate variability) and weight are not
+imported, and the preview lists them as not tracked here.
 
 Importing merges into what's already there, day by day, and imported values win. You can run it
-again safely. The file is sent from your browser to Home Assistant over the existing authenticated
-connection and is never written to disk.
+again safely. The file and its password are sent from your browser to Home Assistant over the existing
+authenticated connection. Neither is written to disk or logged.
 
 ## How predictions work
 
@@ -177,6 +183,8 @@ connection and is never written to disk.
   recent cycle, to 1 day after the latest, using your longest. Peak fertility is the two days before
   ovulation and ovulation itself.
 - Past cycles get an **estimated ovulation** from when the next period actually started.
+- A "cycle" longer than 90 days is almost always months where nothing was logged, so it's shown as a
+  **gap** in the history and left out of the averages.
 
 ## WebSocket API
 

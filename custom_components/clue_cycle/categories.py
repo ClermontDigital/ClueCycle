@@ -17,6 +17,7 @@ def _opt(option_id: str, label: str, icon: str) -> dict[str, str]:
     return {"id": option_id, "label": label, "icon": icon}
 
 
+# Option ids are the ones Clue's own data export uses, so an import maps one to one.
 CATEGORIES: list[dict[str, Any]] = [
     {
         "id": "period", "label": "Period", "color": "#E8473F", "icon": "mdi:water", "single": True,
@@ -42,29 +43,38 @@ CATEGORIES: list[dict[str, Any]] = [
         "id": "feelings", "label": "Feelings", "color": "#E05C8A", "icon": "mdi:emoticon-outline",
         "options": [
             _opt("happy", "Happy", "mdi:emoticon-happy-outline"),
-            _opt("sensitive", "Sensitive", "mdi:emoticon-neutral-outline"),
+            _opt("fine", "Fine", "mdi:emoticon-neutral-outline"),
+            _opt("sensitive", "Sensitive", "mdi:emoticon-cry-outline"),
             _opt("sad", "Sad", "mdi:emoticon-sad-outline"),
-            _opt("pms", "PMS", "mdi:emoticon-angry-outline"),
+            _opt("mood_swings", "Mood swings", "mdi:sine-wave"),
+            _opt("irritable", "Irritable", "mdi:emoticon-angry-outline"),
             _opt("anxious", "Anxious", "mdi:emoticon-confused-outline"),
-            _opt("irritable", "Irritable", "mdi:emoticon-frown-outline"),
+            _opt("insecure", "Insecure", "mdi:emoticon-frown-outline"),
+            _opt("not_in_control", "Not in control", "mdi:emoticon-dead-outline"),
+            _opt("indifferent", "Indifferent", "mdi:emoticon-neutral"),
+            _opt("grateful", "Grateful", "mdi:hand-heart-outline"),
+            _opt("excited", "Excited", "mdi:emoticon-excited-outline"),
+            _opt("pms", "PMS", "mdi:emoticon-devil-outline"),
         ],
     },
     {
         "id": "pain", "label": "Pain", "color": "#D9577F", "icon": "mdi:lightning-bolt-outline",
         "options": [
-            _opt("cramps", "Cramps", "mdi:lightning-bolt"),
+            _opt("period_cramps", "Period cramps", "mdi:lightning-bolt"),
             _opt("headache", "Headache", "mdi:head-alert-outline"),
-            _opt("ovulation_pain", "Ovulation pain", "mdi:circle-slice-3"),
-            _opt("tender_breasts", "Tender breasts", "mdi:heart-outline"),
-            _opt("back_pain", "Back pain", "mdi:human-handsdown"),
+            _opt("migraine", "Migraine", "mdi:head-flash-outline"),
+            _opt("ovulation", "Ovulation pain", "mdi:circle-slice-3"),
+            _opt("breast_tenderness", "Tender breasts", "mdi:heart-outline"),
+            _opt("lower_back", "Lower back pain", "mdi:human-handsdown"),
+            _opt("joint", "Joint pain", "mdi:bone"),
         ],
     },
     {
         "id": "energy", "label": "Energy", "color": "#2EA77A", "icon": "mdi:battery-charging-outline",
         "options": [
-            _opt("energized", "Energised", "mdi:battery-charging-high"),
-            _opt("high", "High energy", "mdi:battery-high"),
-            _opt("low", "Low energy", "mdi:battery-low"),
+            _opt("fully_energized", "Fully energised", "mdi:battery-charging-high"),
+            _opt("energetic", "Energetic", "mdi:battery-high"),
+            _opt("tired", "Tired", "mdi:battery-low"),
             _opt("exhausted", "Exhausted", "mdi:battery-alert-variant-outline"),
         ],
     },
@@ -75,6 +85,14 @@ CATEGORIES: list[dict[str, Any]] = [
             _opt("3_6", "3-6 hrs", "mdi:clock-time-six-outline"),
             _opt("6_9", "6-9 hrs", "mdi:clock-time-nine-outline"),
             _opt("9_plus", "9+ hrs", "mdi:clock-time-twelve-outline"),
+        ],
+    },
+    {
+        "id": "sleep_quality", "label": "Sleep quality", "color": "#4A7BD0", "icon": "mdi:bed-outline",
+        "options": [
+            _opt("woke_up_tired", "Woke up tired", "mdi:coffee-outline"),
+            _opt("restless_sleep", "Restless sleep", "mdi:rotate-3d-variant"),
+            _opt("night_sweats", "Night sweats", "mdi:water-thermometer-outline"),
         ],
     },
     {
@@ -115,18 +133,18 @@ CATEGORIES: list[dict[str, Any]] = [
     {
         "id": "digestion", "label": "Digestion", "color": "#B5895A", "icon": "mdi:stomach",
         "options": [
-            _opt("great", "Great digestion", "mdi:check-circle-outline"),
+            _opt("ok", "Good digestion", "mdi:check-circle-outline"),
             _opt("bloated", "Bloated", "mdi:circle-expand"),
-            _opt("nauseated", "Nauseated", "mdi:emoticon-sick-outline"),
             _opt("gassy", "Gassy", "mdi:weather-windy"),
+            _opt("nauseous", "Nauseous", "mdi:emoticon-sick-outline"),
+            _opt("vomiting", "Vomiting", "mdi:emoticon-sick"),
         ],
     },
     {
         "id": "poop", "label": "Poop", "color": "#9C6B3E", "icon": "mdi:toilet",
         "options": [
-            _opt("great", "Great", "mdi:check-circle-outline"),
-            _opt("normal", "Normal", "mdi:circle-outline"),
-            _opt("constipated", "Constipated", "mdi:close-circle-outline"),
+            _opt("ok", "Normal", "mdi:check-circle-outline"),
+            _opt("constipation", "Constipated", "mdi:close-circle-outline"),
             _opt("diarrhea", "Diarrhoea", "mdi:water-alert-outline"),
         ],
     },
@@ -146,8 +164,10 @@ CATEGORIES: list[dict[str, Any]] = [
             _opt("protected", "Protected sex", "mdi:shield-heart-outline"),
             _opt("unprotected", "Unprotected sex", "mdi:heart-outline"),
             _opt("withdrawal", "Withdrawal", "mdi:heart-half-outline"),
-            _opt("high_drive", "High sex drive", "mdi:fire"),
-            _opt("low_drive", "Low sex drive", "mdi:snowflake"),
+            _opt("orgasm", "Orgasm", "mdi:star-four-points-outline"),
+            _opt("sex_toys", "Sex toys", "mdi:shimmer"),
+            _opt("high_sex_drive", "High sex drive", "mdi:fire"),
+            _opt("low_sex_drive", "Low sex drive", "mdi:snowflake"),
             _opt("masturbation", "Masturbation", "mdi:heart-circle-outline"),
         ],
     },
@@ -158,6 +178,16 @@ CATEGORIES: list[dict[str, Any]] = [
             _opt("ovulation_negative", "Ovulation test -", "mdi:minus-circle-outline"),
             _opt("pregnancy_positive", "Pregnancy test +", "mdi:plus-box-outline"),
             _opt("pregnancy_negative", "Pregnancy test -", "mdi:minus-box-outline"),
+        ],
+    },
+    {
+        "id": "birth_control", "label": "Birth control", "color": "#E0679A", "icon": "mdi:pill",
+        "options": [
+            _opt("pill_taken", "Pill taken", "mdi:check-circle-outline"),
+            _opt("pill_late", "Pill late", "mdi:clock-alert-outline"),
+            _opt("pill_missed", "Pill missed", "mdi:close-circle-outline"),
+            _opt("pill_double", "Double pill", "mdi:numeric-2-circle-outline"),
+            _opt("shot", "Shot", "mdi:needle"),
         ],
     },
     {
@@ -172,9 +202,9 @@ CATEGORIES: list[dict[str, Any]] = [
     {
         "id": "hair", "label": "Hair", "color": "#E8A33D", "icon": "mdi:hair-dryer-outline",
         "options": [
-            _opt("good", "Good hair", "mdi:star-four-points-outline"),
-            _opt("bad", "Bad hair", "mdi:emoticon-frown-outline"),
-            _opt("oily", "Oily", "mdi:water-outline"),
+            _opt("good_hair", "Good hair", "mdi:star-four-points-outline"),
+            _opt("bad_hair", "Bad hair", "mdi:emoticon-frown-outline"),
+            _opt("oily_scalp", "Oily scalp", "mdi:water-outline"),
             _opt("dry", "Dry", "mdi:texture"),
         ],
     },
@@ -190,6 +220,22 @@ CATEGORIES: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "party", "label": "Party", "color": "#B05CC8", "icon": "mdi:party-popper",
+        "options": [
+            _opt("alcohol", "Drinks", "mdi:glass-cocktail"),
+            _opt("cigarettes", "Cigarettes", "mdi:smoking"),
+            _opt("hangover", "Hangover", "mdi:emoticon-sick-outline"),
+            _opt("big_night", "Big night out", "mdi:weather-night"),
+        ],
+    },
+    {
+        "id": "leisure", "label": "Leisure", "color": "#B05CC8", "icon": "mdi:beach",
+        "options": [
+            _opt("date", "Date", "mdi:glass-wine"),
+            _opt("vacation", "Holiday", "mdi:airplane"),
+        ],
+    },
+    {
         "id": "ailments", "label": "Ailments", "color": "#9AA0A6", "icon": "mdi:emoticon-sick-outline",
         "options": [
             _opt("cold_flu", "Cold or flu", "mdi:snowflake-thermometer"),
@@ -201,10 +247,17 @@ CATEGORIES: list[dict[str, Any]] = [
     {
         "id": "medication", "label": "Medication", "color": "#9AA0A6", "icon": "mdi:pill",
         "options": [
-            _opt("painkiller", "Painkiller", "mdi:pill"),
+            _opt("painkillers", "Painkillers", "mdi:pill"),
             _opt("antihistamine", "Antihistamine", "mdi:pill-multiple"),
-            _opt("cold_flu_meds", "Cold or flu meds", "mdi:medical-bag"),
-            _opt("antibiotic", "Antibiotic", "mdi:bottle-tonic-plus-outline"),
+            _opt("cold_or_flu_meds", "Cold or flu meds", "mdi:medical-bag"),
+            _opt("antibiotics", "Antibiotics", "mdi:bottle-tonic-plus-outline"),
+        ],
+    },
+    {
+        "id": "appointments", "label": "Appointments", "color": "#6C8EBF", "icon": "mdi:calendar-heart",
+        "options": [
+            _opt("general_check_up", "Check-up", "mdi:stethoscope"),
+            _opt("ob_gyn", "OB-GYN", "mdi:doctor"),
         ],
     },
 ]

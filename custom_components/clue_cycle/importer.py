@@ -32,9 +32,11 @@ CATEGORY_ALIASES = {
     "spotting": "period",
     "collection_method": "collection", "collection": "collection", "period_products": "collection",
     "feelings": "feelings", "emotions": "feelings", "mood": "feelings", "emotion": "feelings",
+    "pms": "feelings",
     "pain": "pain",
     "energy": "energy",
-    "sleep": "sleep",
+    "sleep": "sleep", "sleep_duration": "sleep",
+    "sleep_quality": "sleep_quality",
     "mind": "mind", "mental": "mind",
     "social": "social", "social_life": "social",
     "cravings": "cravings", "craving": "cravings",
@@ -43,36 +45,74 @@ CATEGORY_ALIASES = {
     "discharge": "discharge", "fluid": "discharge", "cervical_fluid": "discharge", "cervical_mucus": "discharge",
     "sex": "sex", "sex_life": "sex", "sex_drive": "sex", "sexual_activity": "sex",
     "tests": "tests", "test": "tests", "ovulation_test": "tests", "pregnancy_test": "tests",
+    "birth_control": "birth_control", "birth_control_pill": "birth_control", "pill": "birth_control",
+    "birth_control_shot": "birth_control",
     "skin": "skin",
     "hair": "hair",
     "exercise": "exercise", "activity": "exercise",
+    "party": "party", "partying": "party",
+    "leisure": "leisure",
     "ailment": "ailments", "ailments": "ailments",
-    "medication": "medication", "meds": "medication", "pills": "medication",
+    "medication": "medication", "meds": "medication",
+    "appointments": "appointments", "appointment": "appointments",
 }
 
-# Clue option names (normalised) -> our option id, per category, where they differ
+# Synced from a wearable or not tracked here; reported as skipped rather than unrecognised.
+NOT_TRACKED = {"resting_heart_rate", "heart_rate_variability", "weight", "temperature", "bbt", "steps"}
+
+# Other spellings (older Clue exports, the old .cluedata format, earlier versions of this
+# integration) -> our option id, per category
 OPTION_ALIASES = {
     "period": {"very_heavy": "super_heavy", "superheavy": "super_heavy", "extra_heavy": "super_heavy"},
     "collection": {"menstrual_cup": "cup", "pantyliner": "panty_liner", "liner": "panty_liner",
                    "period_pants": "period_underwear", "underwear": "period_underwear"},
-    "feelings": {"premenstrual_syndrome": "pms"},
-    "pain": {"ovulation": "ovulation_pain", "tender_breast": "tender_breasts", "breasts": "tender_breasts"},
-    "energy": {"energised": "energized"},
+    "feelings": {"premenstrual_syndrome": "pms", "yes": "pms", "mood_swing": "mood_swings"},
+    "pain": {"cramps": "period_cramps", "ovulation_pain": "ovulation", "tender_breasts": "breast_tenderness",
+             "tender_breast": "breast_tenderness", "breasts": "breast_tenderness", "back_pain": "lower_back",
+             "back": "lower_back", "joint_pain": "joint"},
+    "energy": {"energised": "fully_energized", "energized": "fully_energized", "high": "energetic",
+               "high_energy": "energetic", "low": "tired", "low_energy": "tired"},
     "sleep": {"0_3_hrs": "0_3", "3_6_hrs": "3_6", "6_9_hrs": "6_9", "9_hrs": "9_plus", "more_than_9": "9_plus",
               "9": "9_plus", ">9": "9_plus"},
     "mind": {"brainfog": "brain_fog"},
-    "poop": {"diarrhoea": "diarrhea"},
+    "digestion": {"great": "ok", "great_digestion": "ok", "nauseated": "nauseous"},
+    "poop": {"great": "ok", "normal": "ok", "constipated": "constipation", "diarrhoea": "diarrhea"},
     "discharge": {"eggwhite": "egg_white", "egg_white_like": "egg_white"},
     "sex": {"protected_sex": "protected", "unprotected_sex": "unprotected", "withdrawal_sex": "withdrawal",
-            "high_sex_drive": "high_drive", "low_sex_drive": "low_drive"},
+            "high_drive": "high_sex_drive", "low_drive": "low_sex_drive", "toys": "sex_toys"},
     "tests": {"ovulation_test_pos": "ovulation_positive", "ovulation_test_neg": "ovulation_negative",
               "pregnancy_test_pos": "pregnancy_positive", "pregnancy_test_neg": "pregnancy_negative",
               "positive": "ovulation_positive", "negative": "ovulation_negative"},
+    "birth_control": {"taken": "pill_taken", "late": "pill_late", "missed": "pill_missed",
+                      "double_dose": "pill_double", "double": "pill_double", "administered": "shot",
+                      "injected": "shot"},
+    "hair": {"good": "good_hair", "bad": "bad_hair", "oily": "oily_scalp"},
+    "party": {"drinks": "alcohol", "drinking": "alcohol", "big_night_out": "big_night", "smoking": "cigarettes"},
+    "leisure": {"holiday": "vacation"},
+    "medication": {"painkiller": "painkillers", "antibiotic": "antibiotics", "cold_flu_meds": "cold_or_flu_meds",
+                   "cold_flu": "cold_or_flu_meds"},
 }
+
+
+def _sleep_bin(value: Any) -> str | None:
+    """Clue now logs sleep as a duration; bucket it into Clue's 0-3 / 3-6 / 6-9 / 9+ hours."""
+    if not isinstance(value, dict):
+        return None
+    if isinstance(value.get("minutes"), (int, float)):
+        hours = value["minutes"] / 60
+    elif isinstance(value.get("hours"), (int, float)):
+        hours = value["hours"]
+    else:
+        return None
+    return "0_3" if hours < 3 else "3_6" if hours < 6 else "6_9" if hours < 9 else "9_plus"
 
 
 class ImportError_(ValueError):
     """The file isn't a Clue export this importer understands."""
+
+
+class PasswordRequired(ImportError_):
+    """The zip is encrypted (Clue's data download is) and needs the password from Clue's email."""
 
 
 def _norm(value: Any) -> str:
@@ -112,18 +152,30 @@ def _options(value: Any) -> list[str]:
     return []
 
 
-def _decode(raw: bytes | str) -> Any:
-    """Accept raw JSON, or a zip containing the JSON (Clue's newer exports are zipped)."""
+def _decode(raw: bytes | str, password: str | None = None) -> Any:
+    """Accept raw JSON, or a zip containing the JSON (Clue's data download is a zip, password protected)."""
     if isinstance(raw, str):
         raw = raw.encode("utf-8")
     if raw[:2] == b"PK":
-        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(raw))
+        except zipfile.BadZipFile as err:
+            raise ImportError_("the zip file is damaged") from err
+        with zf:
             names = [n for n in zf.namelist() if n.lower().endswith((".json", ".cluedata"))]
             if not names:
                 raise ImportError_("the zip has no JSON file in it")
             # Prefer the measurements file when there are several.
             names.sort(key=lambda n: ("measure" not in n.lower(), n))
-            raw = zf.read(names[0])
+            info = zf.getinfo(names[0])
+            if info.flag_bits & 0x1 and not password:
+                raise PasswordRequired("this zip is password protected; enter the password from Clue's email")
+            try:
+                raw = zf.read(info, pwd=password.encode("utf-8") if password else None)
+            except RuntimeError as err:  # zipfile's "Bad password for file"
+                raise PasswordRequired("that password didn't open the zip") from err
+            except NotImplementedError as err:  # AES-encrypted zips
+                raise ImportError_("this zip's encryption can't be opened here; unzip it and pick measurements.json") from err
     try:
         return json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
@@ -135,6 +187,7 @@ class _Collector:
         self.days: dict[str, dict[str, Any]] = {}
         self.tags: list[str] = []
         self.unknown: Counter[str] = Counter()
+        self.skipped: Counter[str] = Counter()
 
     def tag(self, day: str, name: str) -> None:
         name = str(name).strip()[:40]
@@ -160,9 +213,15 @@ class _Collector:
                 log = self.days.setdefault(day, {})
                 log["note"] = (log.get("note", "") + "\n" + text).strip()[:2000]
             return
+        if cat_key in NOT_TRACKED:
+            self.skipped[cat_key] += 1
+            return
         cat = CATEGORY_ALIASES.get(cat_key)
         if not cat:
             self.unknown[cat_key] += 1
+            return
+        if cat == "sleep" and (bucket := _sleep_bin(value)):
+            self.days.setdefault(day, {})["sleep"] = bucket
             return
         aliases = OPTION_ALIASES.get(cat, {})
         for raw in _options(value):
@@ -191,9 +250,9 @@ class _Collector:
                 values.append(opt)
 
 
-def parse_clue_export(raw: bytes | str) -> dict[str, Any]:
-    """Return {"days", "tags", "unknown", "range"} from a Clue export file."""
-    data = _decode(raw)
+def parse_clue_export(raw: bytes | str, password: str | None = None) -> dict[str, Any]:
+    """Return {"days", "tags", "unknown", "skipped", "range"} from a Clue export file."""
+    data = _decode(raw, password)
     col = _Collector()
     records: list[Any]
     if isinstance(data, dict) and isinstance(data.get("data"), list):
@@ -226,5 +285,6 @@ def parse_clue_export(raw: bytes | str) -> dict[str, Any]:
         "days": col.days,
         "tags": col.tags,
         "unknown": dict(col.unknown.most_common(40)),
+        "skipped": dict(col.skipped),
         "range": [days_sorted[0], days_sorted[-1]],
     }

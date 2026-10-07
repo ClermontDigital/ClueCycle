@@ -2,7 +2,7 @@
  * Unofficial; not affiliated with Clue or BioWink GmbH.
  * Buildless: plain JS custom element, served by the clue_cycle integration.
  */
-const CC_VERSION = "0.1.1";
+const CC_VERSION = "0.2.0";
 
 const COL = {
   bg: "#1C1B19", surface: "#262422", surface2: "#2F2D2A", line: "#3B3936",
@@ -336,8 +336,10 @@ class ClueCycleCard extends HTMLElement {
     const bar = (flows) => `<div class="fbar" style="grid-template-columns:repeat(${maxDays},1fr)">${flows.map((f, i) => `<span style="background:${FLOW_COL[f] || COL.surface2};${i === 0 ? "border-radius:12px 0 0 12px;" : ""}${i === flows.length - 1 ? "border-radius:0 12px 12px 0;" : ""}"></span>`).join("")}</div>`;
     const rows = [`<div class="frow"><b>Average</b>${bar(avgRow)}</div>`]
       .concat(recent.slice().reverse().map((c) => `<div class="frow"><span>${fmtDay(c.start)}</span>${bar(c.flows)}</div>`));
-    const maxLen = Math.max(35, ...done.map((c) => c.length));
-    const history = done.slice(-12).reverse().map((c) => `<div class="hrow"><span>${fmtDay(c.start)}</span>
+    const maxLen = Math.max(35, ...done.filter((c) => !c.gap).map((c) => c.length));
+    const history = done.slice(-12).reverse().map((c) => c.gap
+      ? `<div class="hrow gap"><span>${fmtDay(c.start)} ${parse(c.start).getFullYear()}</span><div class="muted small">Nothing logged for ${c.length} days, so this isn't counted</div><b class="muted">gap</b></div>`
+      : `<div class="hrow"><span>${fmtDay(c.start)}</span>
       <div class="hbar"><span class="p" style="width:${(c.period_length / maxLen) * 100}%"></span><span class="r" style="width:${((c.length - c.period_length) / maxLen) * 100}%"></span></div><b>${c.length}d</b></div>`).join("");
     return `<div class="analysis">
       <div class="stat"><div class="stat-l">${this._ringIcon(1, COL.blueLight)}<div><div class="muted">Cycle length</div><div class="big">${plural(s.cycle_length, "day")}</div></div></div>
@@ -382,11 +384,13 @@ class ClueCycleCard extends HTMLElement {
     if (this._canEdit) {
       const imp = this._import;
       html += `<section class="panel"><h3>Import from Clue</h3>
-        <p class="muted small">In the Clue app, export your data (Settings → Data export), then pick the file here. You'll see a preview before anything is saved.</p>
+        <p class="muted small">In the Clue app, use Download my data, then pick the zip Clue emails you. If it asks, enter the password from Clue's email. You'll see a preview before anything is saved.</p>
         <input type="file" class="file" data-change="importfile" accept=".json,.cluedata,.zip,application/json,application/zip">
         ${imp && imp.error ? `<p class="warn">${esc(imp.error)}</p>` : ""}
+        ${imp && imp.needsPassword ? `<div class="newtag"><input class="zip-pw" type="password" autocomplete="off" placeholder="Password from Clue's email"><button class="btn" data-action="unlockzip">Unlock</button></div>` : ""}
         ${imp && imp.preview ? `<div class="preview"><p><b>${imp.preview.days}</b> days from <b>${fmtDay(imp.preview.range[0])} ${parse(imp.preview.range[0]).getFullYear()}</b> to <b>${fmtDay(imp.preview.range[1])} ${parse(imp.preview.range[1]).getFullYear()}</b>, ${plural(imp.preview.tags, "tag")}.</p>
-          ${Object.keys(imp.preview.unknown || {}).length ? `<p class="muted small">Not recognised (skipped): ${Object.entries(imp.preview.unknown).map(([k, v]) => `${esc(k)} ×${v}`).join(", ")}</p>` : ""}
+          ${Object.keys(imp.preview.unknown || {}).length ? `<p class="muted small">Not recognised, so not imported: ${Object.entries(imp.preview.unknown).map(([k, v]) => `${esc(k)} ×${v}`).join(", ")}</p>` : ""}
+          ${Object.keys(imp.preview.skipped || {}).length ? `<p class="muted small">Not tracked here (wearable or body data): ${Object.entries(imp.preview.skipped).map(([k, v]) => `${esc(k.replace(/_/g, " "))} ×${v}`).join(", ")}</p>` : ""}
           <button class="btn" data-action="import">Import ${imp.preview.days} days</button></div>` : ""}
         ${imp && imp.done ? `<p class="ok"><ha-icon icon="mdi:check-circle"></ha-icon>Imported ${imp.done.days} days (${imp.done.new_days} new).</p>` : ""}
       </section>`;
@@ -452,9 +456,14 @@ class ClueCycleCard extends HTMLElement {
       if (on && !confirm("Turn on Home Assistant sensors? They're visible to every Home Assistant user and kept in history.")) return;
       const res = await this._ws({ type: "clue_cycle/sharing_set", entry_id: this._entryId, expose_entities: on });
       this._sharing.expose_entities = res.expose_entities; this._render();
+    } else if (a === "unlockzip") {
+      const pw = this._root.querySelector(".zip-pw")?.value;
+      if (pw) await this._previewImport(pw);
     } else if (a === "import") {
       try {
-        const done = await this._ws({ type: "clue_cycle/import", entry_id: this._entryId, content: this._import.content, filename: this._import.name });
+        const msg = { type: "clue_cycle/import", entry_id: this._entryId, content: this._import.content, filename: this._import.name };
+        if (this._import.password) msg.password = this._import.password;
+        const done = await this._ws(msg);
         this._import = { done }; await this._reload();
       } catch (err) { this._import = { error: err.message }; this._render(); }
     }
@@ -480,12 +489,23 @@ class ClueCycleCard extends HTMLElement {
         r.onerror = () => rej(r.error);
         r.readAsDataURL(file);
       });
-      try {
-        const preview = await this._ws({ type: "clue_cycle/import", entry_id: this._entryId, content, filename: file.name, dry_run: true });
-        this._import = { preview, content, name: file.name };
-      } catch (err) { this._import = { error: err.message }; }
-      this._render();
+      this._import = { content, name: file.name };
+      await this._previewImport();
     }
+  }
+
+  async _previewImport(password) {
+    const { content, name } = this._import;
+    const msg = { type: "clue_cycle/import", entry_id: this._entryId, content, filename: name, dry_run: true };
+    if (password) msg.password = password;
+    try {
+      const preview = await this._ws(msg);
+      this._import = { content, name, password, preview };
+    } catch (err) {
+      // Clue's data download is a password-protected zip: ask for the password and try again.
+      this._import = { content, name, error: err.message, needsPassword: err.code === "password_required" };
+    }
+    this._render();
   }
 
   _toast(message) {

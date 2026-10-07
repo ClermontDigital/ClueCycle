@@ -116,3 +116,16 @@ def test_calendar_marks_past_and_future():
     # last complete cycle (32 days) got an estimated ovulation 14 days before this cycle started
     assert cal[(current - timedelta(days=14)).isoformat()]["kind"] == "ovulation"
     assert cal[current.isoformat()]["logged"] is True
+
+
+def test_tracking_gaps_are_left_out_of_the_stats():
+    days, current = build()
+    # Push the whole history back so there's a 300-day hole before the latest period.
+    shifted = {}
+    for key, log in days.items():
+        d = date.fromisoformat(key)
+        shifted[(d - timedelta(days=300) if d < current else d).isoformat()] = log
+    cyc = engine.cycles(shifted)
+    assert any(c.gap for c in cyc)
+    st = engine.stats(cyc, S)
+    assert st.cycle_length == 32 and st.cycles_used == 5

@@ -1,3 +1,19 @@
+## 0.2.0
+
+- **Imports Clue's current "Download my data" zip.** The zip is password protected, so the card now
+  asks for the password from Clue's email. Only `measurements.json` is read from it.
+- **Categories and options now use the names in Clue's export.** For example, Pain is now Period
+  cramps, Headache, Migraine, Ovulation pain, Tender breasts, Lower back and Joint. Energy is now
+  Fully energised, Energetic, Tired and Exhausted. Feelings adds Fine, Mood swings, Insecure, Not in
+  control, Indifferent, Grateful and Excited. There are also new options for Digestion, Poop, Sex,
+  Hair and Medication. The old names are still accepted when importing.
+- **New categories:** Birth control (pill taken, late, missed or doubled, and shot), Sleep quality,
+  Party, Leisure and Appointments.
+- **Imported sleep durations** go into Clue's 0-3, 3-6, 6-9 and 9+ hour buckets. Wearable data and
+  weight are listed as not tracked rather than unrecognised.
+- **Tracking gaps** longer than 90 days show as a gap in the cycle history and are left out of the
+  averages, so years of patchy tracking can't skew the predictions.
+
 ## 0.1.1
 
 - Packaging only, no behaviour changes. The manifest keys are now in the order hassfest expects,

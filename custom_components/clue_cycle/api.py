@@ -26,7 +26,7 @@ from .categories import CATEGORIES, TAG_COLOR
 from .const import (
     CONF_CYCLE_LENGTH, CONF_GOAL, CONF_LUTEAL_LENGTH, CONF_PERIOD_LENGTH, DOMAIN, GOALS, SIGNAL_UPDATED,
 )
-from .importer import ImportError_, parse_clue_export
+from .importer import ImportError_, PasswordRequired, parse_clue_export
 from .storage import CycleStore, InvalidLog
 
 MAX_IMPORT_BYTES = 25 * 1024 * 1024
@@ -243,6 +243,7 @@ async def ws_analysis(hass: HomeAssistant, connection: websocket_api.ActiveConne
     vol.Required("content"): str,           # base64 of the file the user picked
     vol.Optional("filename", default=""): str,
     vol.Optional("dry_run", default=False): bool,
+    vol.Optional("password"): vol.All(str, vol.Length(max=200)),  # Clue's zips are password protected
 })
 @websocket_api.async_response
 async def ws_import(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
@@ -258,12 +259,15 @@ async def ws_import(hass: HomeAssistant, connection: websocket_api.ActiveConnect
         connection.send_error(msg["id"], "invalid", "That file is too big for a Clue export")
         return
     try:
-        parsed = await hass.async_add_executor_job(parse_clue_export, raw)
+        parsed = await hass.async_add_executor_job(parse_clue_export, raw, msg.get("password") or None)
+    except PasswordRequired as err:
+        connection.send_error(msg["id"], "password_required", str(err).capitalize())
+        return
     except ImportError_ as err:
         connection.send_error(msg["id"], "invalid", f"Not a Clue export this can read: {err}")
         return
     summary = {"range": parsed["range"], "days": len(parsed["days"]), "tags": len(parsed["tags"]),
-               "unknown": parsed["unknown"], "dry_run": msg["dry_run"]}
+               "unknown": parsed["unknown"], "skipped": parsed.get("skipped", {}), "dry_run": msg["dry_run"]}
     if not msg["dry_run"]:
         summary.update(await store.async_import(parsed["days"], parsed["tags"], connection.user.id))
         _changed(hass, entry.entry_id)

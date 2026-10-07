@@ -18,6 +18,7 @@ from .categories import CATEGORY_BY_ID, FLOW_LEVELS, TAG_COLOR
 
 PERIOD_GAP_DAYS = 2        # flow days this close together belong to the same period
 MIN_CYCLE_DAYS = 10        # a "new" period sooner than this is treated as part of the last one
+MAX_TRACKED_CYCLE = 90     # longer "cycles" are almost always months where nothing was logged
 STATS_CYCLES = 6           # cycles used for averages and variation, like Clue
 TYPICAL_CYCLE = (21, 35)
 TYPICAL_PERIOD = (2, 7)
@@ -65,10 +66,16 @@ class Cycle:
     period: Period
     length: int | None = None  # None for the current, unfinished cycle
 
+    @property
+    def gap(self) -> bool:
+        """True when the cycle is really a stretch of untracked months, not a cycle."""
+        return bool(self.length and self.length > MAX_TRACKED_CYCLE)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "start": self.start.isoformat(),
             "length": self.length,
+            "gap": self.gap,
             "period_length": self.period.length,
             "flows": [self.period.flows.get(self.start + timedelta(days=i)) for i in range(self.period.length)],
         }
@@ -138,7 +145,8 @@ class Stats:
 
 def stats(cyc: list[Cycle], settings: Settings) -> Stats:
     """Averages over the last few complete cycles, falling back to the settings."""
-    complete = [c for c in cyc if c.length][-STATS_CYCLES:]
+    # Tracking gaps would wreck the averages, so they're left out like Clue's excluded cycles.
+    complete = [c for c in cyc if c.length and not c.gap][-STATS_CYCLES:]
     lengths = [c.length for c in complete if c.length]
     recent_periods = [c.period.length for c in cyc[-STATS_CYCLES:]]
     cycle_len = round(mean(lengths)) if lengths else settings.cycle_length
