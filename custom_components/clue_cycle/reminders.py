@@ -6,6 +6,9 @@ Done logs the dose on that day, Snooze asks again in 15 minutes, and if nothing 
 30 minutes after the reminder it asks once more. Notifications only go to the Home Assistant
 companion apps of people who can see the tracker.
 
+The daily check-in ("How do you feel today?", like Clue's own reminder) goes out at a set time, and by
+default only if nothing has been logged that day yet. Tapping it opens the tracker on the Track tab.
+
 Phase notifications are checked once a day at the owner's chosen time: when today's phase differs
 from the last one notified (fertile window starting, period due, test day and so on), the ring's
 headline goes out as the notification.
@@ -52,6 +55,32 @@ async def async_targets(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[st
         if user_id in allowed and hass.services.has_service("notify", service):
             out.append({"service": service, "device": device, "user": names.get(user_id, "Someone")})
     return sorted(out, key=lambda t: (t["user"].lower(), t["device"].lower()))
+
+
+OWNER_PHONES = "owner"   # stands for the tracker owner's phones, worked out when each notification is sent
+
+
+def owner_services(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:
+    """The owner's companion apps on phones and tablets (not Macs), including ones added since setup."""
+    out = []
+    for app in hass.config_entries.async_entries("mobile_app"):
+        if app.data.get("user_id") != owner_of(entry) or app.data.get("os_name") == "macOS":
+            continue
+        service = f"mobile_app_{slugify(app.data.get('device_name') or app.title)}"
+        if hass.services.has_service("notify", service):
+            out.append(service)
+    return out
+
+
+async def resolve_targets(hass: HomeAssistant, entry: ConfigEntry, targets: list[str]) -> list[str]:
+    """Expand "owner", and drop any phone whose person no longer has access to the tracker."""
+    allowed = {t["service"] for t in await async_targets(hass, entry)}
+    out: list[str] = []
+    for target in targets or []:
+        for service in (owner_services(hass, entry) if target == OWNER_PHONES else [target]):
+            if service in allowed and service not in out:
+                out.append(service)
+    return out
 
 
 def next_dose(store: CycleStore, now: datetime) -> dict[str, Any] | None:
@@ -142,10 +171,7 @@ class Reminders:
         else:
             title, message = status["headline"], status["sub"]
         sent = 0
-        allowed = {t["service"] for t in await async_targets(self.hass, self.entry)}
-        for target in cfg.get("targets") or []:
-            if target not in allowed:
-                continue
+        for target in await resolve_targets(self.hass, self.entry, cfg.get("targets") or []):
             try:
                 await self.hass.services.async_call("notify", target, {
                     "title": f"Test: {title}" if test else title, "message": message,
@@ -153,6 +179,34 @@ class Reminders:
                 sent += 1
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("Clue Cycle: couldn't send a phase notification to %s", target, exc_info=True)
+        return sent
+
+    # Daily check-in -------------------------------------------------------------------------------
+
+    async def _checkin_due(self, now: datetime) -> None:
+        cfg = self.store.checkin
+        if not cfg.get("enabled"):
+            return
+        if cfg.get("skip_if_logged", True) and self.store.logged(dt_util.as_local(now).date().isoformat()):
+            return   # already logged today, no need to ask
+        await self.async_send_checkin(cfg)
+
+    async def async_send_checkin(self, cfg: dict[str, Any], test: bool = False) -> int:
+        data: dict[str, Any] = {"tag": f"cluecycle_checkin_{self.entry.entry_id}", "group": "cluecycle"}
+        if cfg.get("open_path"):
+            # Opens the tracker on the Track tab: `url` for iOS, `clickAction` for Android.
+            path = f"{cfg['open_path']}?cc_view=track"
+            data.update({"url": path, "clickAction": path})
+        title = "Clue Cycle"
+        sent = 0
+        for target in await resolve_targets(self.hass, self.entry, cfg.get("targets") or []):
+            try:
+                await self.hass.services.async_call("notify", target, {
+                    "title": f"Test: {title}" if test else title, "message": cfg.get("message") or "How do you feel today?",
+                    "data": data}, blocking=True)
+                sent += 1
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Clue Cycle: couldn't send the daily check-in to %s", target, exc_info=True)
         return sent
 
     @callback
@@ -176,6 +230,10 @@ class Reminders:
         if cfg["enabled"]:
             hour, minute = map(int, cfg["time"].split(":"))
             self._timers.append(async_track_time_change(self.hass, self._phase_check, hour=hour, minute=minute, second=0))
+        checkin = self.store.checkin
+        if checkin.get("enabled"):
+            hour, minute = map(int, checkin["time"].split(":"))
+            self._timers.append(async_track_time_change(self.hass, self._checkin_due, hour=hour, minute=minute, second=0))
         for s in self.store.schedules:
             if s.get("enabled"):
                 hour, minute = map(int, s["time"].split(":"))
@@ -232,10 +290,7 @@ class Reminders:
             ],
         }
         sent = 0
-        allowed = {t["service"] for t in await async_targets(self.hass, self.entry)}
-        for target in s.get("targets") or []:
-            if target not in allowed:
-                continue  # that person's access has been removed since the reminder was set up
+        for target in await resolve_targets(self.hass, self.entry, s.get("targets") or []):
             try:
                 await self.hass.services.async_call(
                     "notify", target, {"title": f"Test: {title}" if test else title, "message": message, "data": data},
@@ -246,7 +301,7 @@ class Reminders:
         return sent
 
     async def _clear(self, s: dict[str, Any]) -> None:
-        for target in s.get("targets") or []:
+        for target in await resolve_targets(self.hass, self.entry, s.get("targets") or []):
             if self.hass.services.has_service("notify", target):
                 await self.hass.services.async_call(
                     "notify", target, {"message": "clear_notification", "data": {"tag": f"cluecycle_{s['token']}"}},

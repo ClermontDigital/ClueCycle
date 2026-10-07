@@ -25,17 +25,28 @@
     "step": {
       "init": {
         "title": "Cycle settings",
-        "description": "Who can see this tracker, notifications and fertility treatment tracking are up to its owner, from the settings in the card.",
+        "description": "Who can see this tracker is up to its owner, from the settings in the card. An admin can switch on the owner's own notifications here. They only go to the owner's phones, so nobody else sees anything.",
         "data": {
           "goal": "Goal",
           "cycle_length": "Usual cycle length",
           "period_length": "Usual period length",
-          "luteal_length": "Luteal phase length"
+          "luteal_length": "Luteal phase length",
+          "notify_phase": "Cycle notifications to the owner's phones",
+          "notify_phase_time": "Time for cycle notifications",
+          "notify_checkin": "Daily 'How do you feel today?' reminder to the owner's phones",
+          "notify_checkin_time": "Time for the daily reminder",
+          "open_path": "Page the reminder opens"
         },
         "data_description": {
-          "luteal_length": "Days from ovulation to the next period. 14 is typical; only change this if you know yours."
+          "luteal_length": "Days from ovulation to the next period. 14 is typical; only change this if you know yours.",
+          "notify_phase": "A notification when their phase changes, like the fertile window starting or a period being due. Only ever sent to the owner's own phones (not Macs), including ones they sign in on later.",
+          "notify_checkin": "Skipped on days something has already been logged. Also only sent to the owner's own phones.",
+          "open_path": "Where tapping the reminder goes, for example /dashboard-cycle/cycle. It opens on the Track tab."
         }
       }
+    },
+    "error": {
+      "invalid_path": "That page path isn't valid: {error}"
     }
   },
   "selector": {

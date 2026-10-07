@@ -29,7 +29,7 @@ from .const import (
     GOALS, SIGNAL_UPDATED,
 )
 from .importer import ImportError_, PasswordRequired, parse_clue_export
-from .reminders import Reminders, async_targets, next_dose
+from .reminders import OWNER_PHONES, Reminders, async_targets, next_dose
 from .storage import TIME_RE, CycleStore, InvalidLog
 
 MAX_IMPORT_BYTES = 25 * 1024 * 1024
@@ -318,7 +318,7 @@ async def ws_settings_set(hass: HomeAssistant, connection: websocket_api.ActiveC
     turned_on = False
     if CONF_PHASE_NOTIFY in msg:
         cfg = dict(msg[CONF_PHASE_NOTIFY])
-        allowed = {t["service"] for t in await async_targets(hass, entry)}
+        allowed = {t["service"] for t in await async_targets(hass, entry)} | {OWNER_PHONES}
         if set(cfg["targets"]) - allowed:
             connection.send_error(msg["id"], "invalid", "Pick phones belonging to people who can see this tracker")
             return
@@ -609,7 +609,40 @@ async def ws_schedules(hass: HomeAssistant, connection: websocket_api.ActiveConn
         return
     entry, store, _ = res
     schedules = [{k: v for k, v in s.items() if k != "token"} for s in store.schedules]
-    connection.send_result(msg["id"], {"schedules": schedules, "targets": await async_targets(hass, entry)})
+    connection.send_result(msg["id"], {"schedules": schedules, "targets": await async_targets(hass, entry),
+                                       "owner_name": await _owner_name(hass, entry), "checkin": store.checkin})
+
+
+async def _owner_name(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    user = await hass.auth.async_get_user(owner_of(entry))
+    return (user.name if user else None) or "The owner"
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/checkin_set",
+    vol.Required("entry_id"): str,
+    vol.Required("enabled"): bool,
+    vol.Optional("time", default="12:00"): str,
+    vol.Optional("targets", default=[]): [str],
+    vol.Optional("skip_if_logged", default=True): bool,
+    vol.Optional("message"): str,
+    vol.Optional("open_path"): str,
+})
+@websocket_api.async_response
+async def ws_checkin_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The daily "How do you feel today?" reminder. Anyone who can log for the tracker can set it."""
+    if not (res := _resolve(hass, connection, msg, "edit")):
+        return
+    entry, store, _ = res
+    allowed = {t["service"] for t in await async_targets(hass, entry)}
+    data = {k: msg[k] for k in ("enabled", "time", "targets", "skip_if_logged", "message", "open_path") if k in msg}
+    try:
+        cfg = await store.async_set_checkin({**store.checkin, **data}, allowed)
+    except InvalidLog as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    _reminders(hass, entry).async_reschedule()
+    connection.send_result(msg["id"], cfg)
 
 
 @websocket_api.websocket_command({
@@ -662,11 +695,12 @@ async def ws_schedule_remove(hass: HomeAssistant, connection: websocket_api.Acti
 @websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/notify_test",
     vol.Required("entry_id"): str,
-    vol.Optional("schedule_id"): str,   # without it, tests the phase notification (owner only)
+    vol.Optional("schedule_id"): str,   # a dose reminder
+    vol.Optional("checkin"): bool,      # the daily check-in; with neither, the phase notification (owner only)
 })
 @websocket_api.async_response
 async def ws_notify_test(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    need = "edit" if msg.get("schedule_id") else "owner"
+    need = "edit" if msg.get("schedule_id") or msg.get("checkin") else "owner"
     if not (res := _resolve(hass, connection, msg, need)):
         return
     entry, store, _ = res
@@ -677,6 +711,8 @@ async def ws_notify_test(hass: HomeAssistant, connection: websocket_api.ActiveCo
             connection.send_error(msg["id"], "not_found", "No such reminder")
             return
         sent = await reminders.async_send(sched, dt_util.now().date(), test=True)
+    elif msg.get("checkin"):
+        sent = await reminders.async_send_checkin(store.checkin, test=True)
     else:
         _, status = reminders.current_phase(dt_util.now().date())
         sent = await reminders.async_send_phase(status, reminders.phase_settings(), test=True)
@@ -688,7 +724,7 @@ COMMANDS = (
     ws_analysis, ws_import, ws_settings_set, ws_sharing, ws_sharing_set, ws_subscribe, ws_layout_set,
     ws_treatment_info, ws_dose_add, ws_dose_remove, ws_med_add, ws_med_remove, ws_treatment_start,
     ws_treatment_update, ws_treatment_delete, ws_treatment_summary, ws_schedules, ws_schedule_set,
-    ws_schedule_remove, ws_notify_test,
+    ws_schedule_remove, ws_notify_test, ws_checkin_set,
 )
 
 

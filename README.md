@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![HACS Badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![Version](https://img.shields.io/badge/version-0.4.1-green.svg)](https://github.com/ClermontDigital/ClueCycle)
+[![Version](https://img.shields.io/badge/version-0.5.0-green.svg)](https://github.com/ClermontDigital/ClueCycle)
 
 A period and cycle tracker that looks and works like the Clue app, where every bit of data stays in
 your own Home Assistant. It has the cycle ring, daily logging with the same categories and tags,
@@ -195,6 +195,19 @@ the time you choose (08:00 by default), Clue Cycle checks your phase. If it has 
 last notification, it sends the same words as the middle of the ring, for example "Good timing to try
 to conceive" or "Period expected today". A period you've already logged doesn't get a notification.
 **Discreet** mode shows only "There's an update on your cycle" on the lock screen.
+
+**The daily reminder** asks "How do you feel today?", like Clue's own reminder, at a time you choose
+(12:00 by default). Tapping it opens the tracker on the Track tab. By default it's skipped on days
+something has already been logged. Anyone who can edit the tracker can set it up in **Settings → Daily reminder**.
+
+**"Your phones"** (or "*owner*'s phones") is a recipient you can tick for any of these notifications. It
+means the owner's phones and tablets (not Macs) at the moment each notification goes out. A phone
+they sign in on later is included without changing anything.
+
+**Admins** can also switch on the owner's cycle notifications and daily reminder under
+**Settings → Devices & services → Clue Cycle → Configure**, for example for someone who hasn't
+opened their tracker yet. These only ever go to the owner's own phones, so the admin still can't see
+anything. The owner can change or turn them off in their card's Settings.
 
 **Dose reminders** are on the Treatment tab and are described below.
 

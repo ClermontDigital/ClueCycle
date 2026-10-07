@@ -2,7 +2,7 @@
  * Unofficial; not affiliated with Clue or BioWink GmbH.
  * Buildless: plain JS custom element, served by the clue_cycle integration.
  */
-const CC_VERSION = "0.4.1";
+const CC_VERSION = "0.5.0";
 
 const COL = {
   bg: "#1C1B19", surface: "#262422", surface2: "#2F2D2A", line: "#3B3936",
@@ -59,6 +59,11 @@ class ClueCycleCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
     this._view = this._config.view === "track" ? "log" : (this._config.view || "today");
+    // Opened from the daily reminder (…?cc_view=track): start on the Track tab.
+    try {
+      const v = new URLSearchParams(window.location.search).get("cc_view");
+      if (v && this._view !== "mini") this._view = v === "track" ? "log" : v;
+    } catch (e) { /* no location, e.g. in a preview */ }
     // view: mini is a compact widget (ring + headline) for other dashboards; tap opens navigation_path.
     this._mini = this._view === "mini";
   }
@@ -180,7 +185,7 @@ class ClueCycleCard extends HTMLElement {
       this._view = "today";
     }
     // Reminders and the phones they can go to (also used by the phase notification settings).
-    const wantSched = this._canEdit && (this._view === "treatment" || (this._view === "settings" && this._tracker.role === "owner"));
+    const wantSched = this._canEdit && (this._view === "treatment" || this._view === "settings");
     if (wantSched) this._sched = await this._ws({ type: "clue_cycle/schedules", entry_id: this._entryId });
     this._render();
   }
@@ -637,6 +642,7 @@ class ClueCycleCard extends HTMLElement {
     } else {
       html += `<section class="panel"><h3>Sharing</h3><p class="muted small">${t.role === "edit" ? "You can view and log for this tracker." : "You can view this tracker."} Only its owner can change who has access.</p></section>`;
     }
+    if (this._canEdit) html += this._checkinSettings();
     if (this._canEdit) {
       const imp = this._import;
       html += `<section class="panel"><h3>Import from Clue</h3>
@@ -657,9 +663,37 @@ class ClueCycleCard extends HTMLElement {
 
   _targetChecks(cls, selected) {
     const targets = (this._sched && this._sched.targets) || [];
-    if (!targets.length) return `<p class="muted small">No phones found. Install the Home Assistant app and sign in as someone who can see this tracker.</p>`;
-    return `<div class="checks">${targets.map((t) => `<label class="check"><input type="checkbox" class="${cls}" value="${esc(t.service)}" ${selected.includes(t.service) ? "checked" : ""}
-      ${cls === "pn-target" ? `data-change="pn"` : ""}>${esc(t.device)} <span class="muted small">${esc(t.user)}</span></label>`).join("")}</div>`;
+    const change = cls === "pn-target" ? `data-change="pn"` : cls === "ci-target" ? `data-change="ci"` : "";
+    const mine = this._tracker.role === "owner";
+    const ownerLabel = mine ? "Your phones" : `${(this._sched && this._sched.owner_name) || "The owner"}'s phones`;
+    // "owner" is worked out when each notification goes out, so a phone signed in later is included.
+    const owner = `<label class="check"><input type="checkbox" class="${cls}" value="owner" ${selected.includes("owner") ? "checked" : ""} ${change}>
+      ${esc(ownerLabel)} <span class="muted small">including any signed in later</span></label>`;
+    return `<div class="checks">${owner}${targets.map((t) => `<label class="check"><input type="checkbox" class="${cls}" value="${esc(t.service)}" ${selected.includes(t.service) ? "checked" : ""}
+      ${change}>${esc(t.device)} <span class="muted small">${esc(t.user)}</span></label>`).join("")}</div>`;
+  }
+
+  _checkinSettings() {
+    const ci = (this._sched && this._sched.checkin) || {};
+    const on = !!ci.enabled;
+    return `<section class="panel"><h3>Daily reminder</h3>
+      <p class="muted small">"How do you feel today?" each day, like Clue's reminder. Tapping it opens Track.</p>
+      <div class="share"><span>Remind</span><div class="seg">${[[false, "Off"], [true, "On"]].map(([v, l]) => `<button class="${on === v ? "on" : ""}" data-action="ci" data-on="${v}">${l}</button>`).join("")}</div></div>
+      <label class="field"><span>Time of day</span><input type="time" class="ci-time" value="${esc(ci.time || "12:00")}" data-change="ci"><em></em></label>
+      <p class="muted small">Send to</p>${this._targetChecks("ci-target", ci.targets || [])}
+      <label class="check"><input type="checkbox" class="ci-skip" data-change="ci" ${ci.skip_if_logged === false ? "" : "checked"}>Skip it on days something's already logged</label>
+      ${on ? `<button class="btn ghost" data-action="citest">Send a test</button>` : ""}</section>`;
+  }
+
+  async _saveCheckin(enabled) {
+    const ci = (this._sched && this._sched.checkin) || {};
+    if (enabled === undefined) enabled = !!ci.enabled;
+    const targets = [...this._root.querySelectorAll(".ci-target:checked")].map((x) => x.value);
+    if (enabled && !targets.length) targets.push("owner");   // nothing ticked: the owner's own phones
+    const r = await this._try(() => this._ws({ type: "clue_cycle/checkin_set", entry_id: this._entryId, enabled,
+      time: this._val("ci-time") || "12:00", targets, skip_if_logged: !!this._root.querySelector(".ci-skip:checked"),
+      open_path: window.location.pathname }));
+    if (r) await this._reload();
   }
 
   _notifySettings() {
@@ -817,11 +851,7 @@ class ClueCycleCard extends HTMLElement {
     const targets = [...this._root.querySelectorAll(".pn-target:checked")].map((x) => x.value);
     const pn = this._ov.phase_notify || {};
     if (enabled === undefined) enabled = !!pn.enabled;
-    if (enabled && !targets.length) {
-      // Turning it on with nothing ticked: default to the owner's own phones.
-      const mine = ((this._sched && this._sched.targets) || []).filter((t) => t.user === (this._hass.user && this._hass.user.name));
-      targets.push(...mine.map((t) => t.service));
-    }
+    if (enabled && !targets.length) targets.push("owner");   // nothing ticked: the owner's own phones
     const res = await this._try(() => this._ws({ type: "clue_cycle/settings_set", entry_id: this._entryId,
       phase_notify: { enabled, time: this._val("pn-time") || "08:00", targets, discreet: !!this._root.querySelector(".pn-discreet:checked") } }));
     if (res) await this._reload();
@@ -934,6 +964,11 @@ class ClueCycleCard extends HTMLElement {
       if (await this._try(() => this._ws({ type: "clue_cycle/settings_set", entry_id: this._entryId, treatment_tracking: on }))) await this._reload();
     } else if (a === "pn") {
       await this._savePhaseNotify(el.dataset.on === "true");
+    } else if (a === "ci") {
+      await this._saveCheckin(el.dataset.on === "true");
+    } else if (a === "citest") {
+      const r = await this._try(() => this._ws({ type: "clue_cycle/notify_test", entry_id: this._entryId, checkin: true }));
+      if (r) this._toast(r.sent ? `Test sent to ${plural(r.sent, "phone")}` : "Nothing was sent. Check the phones ticked above.");
     } else if (a === "pntest") {
       const r = await this._try(() => this._ws({ type: "clue_cycle/notify_test", entry_id: this._entryId }));
       if (r) this._toast(r.sent ? `Test sent to ${plural(r.sent, "phone")}` : "Nothing was sent. Check the phones ticked above.");
@@ -1025,6 +1060,8 @@ class ClueCycleCard extends HTMLElement {
       if (med && unit) unit.value = med.unit || "";
     } else if (kind === "pn") {
       await this._savePhaseNotify();
+    } else if (kind === "ci") {
+      await this._saveCheckin();
     } else if (kind === "importfile" && el.files && el.files[0]) {
       const file = el.files[0];
       const content = await new Promise((res, rej) => {

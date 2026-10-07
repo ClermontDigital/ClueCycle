@@ -40,6 +40,7 @@ class CycleStore:
         self.schedules: list[dict[str, Any]] = []    # dose reminders
         self.notified: dict[str, Any] = {}           # the last phase a notification went out for
         self.layout: dict[str, list[str]] = {}       # Track tab: category order and hidden categories
+        self.checkin: dict[str, Any] = {}            # the daily "How do you feel today?" reminder
 
     async def async_load(self) -> None:
         data = await self._store.async_load() or {}
@@ -50,11 +51,12 @@ class CycleStore:
         self.schedules = data.get("schedules") or []
         self.notified = data.get("notified") or {}
         self.layout = data.get("layout") or {}
+        self.checkin = data.get("checkin") or {}
 
     async def _save(self) -> None:
         await self._store.async_save({"days": self.days, "tags": self.tags, "treatments": self.treatments,
                                       "meds": self.meds, "schedules": self.schedules, "notified": self.notified,
-                                      "layout": self.layout})
+                                      "layout": self.layout, "checkin": self.checkin})
 
     async def async_set_layout(self, order: list[str], hidden: list[str]) -> dict[str, list[str]]:
         """Save the Track tab's category order and hidden categories (shared by everyone who logs)."""
@@ -65,6 +67,30 @@ class CycleStore:
             self.layout = {"order": order, "hidden": hidden}
             await self._save()
             return self.layout
+
+    def logged(self, day: str) -> bool:
+        """Has anything been logged on this day (not counting who changed it when)?"""
+        return bool({k for k, v in (self.days.get(day) or {}).items() if k not in META_KEYS and v})
+
+    async def async_set_checkin(self, data: dict[str, Any], allowed_targets: set[str]) -> dict[str, Any]:
+        enabled = bool(data.get("enabled"))
+        time = str(data.get("time") or "12:00")
+        if not TIME_RE.match(time):
+            raise InvalidLog("time must be HH:MM")
+        targets = list(dict.fromkeys(data.get("targets") or []))
+        if enabled and not targets:
+            raise InvalidLog("pick at least one phone to remind")
+        if set(targets) - allowed_targets - {"owner"}:
+            raise InvalidLog("you can only remind the phones of people who can see this tracker")
+        message = str(data.get("message") or "How do you feel today?").strip()[:120]
+        open_path = str(data.get("open_path") or "").strip()
+        if open_path and (not open_path.startswith("/") or len(open_path) > 200):
+            raise InvalidLog("the page to open must be a path like /dashboard-cycle/cycle")
+        async with self._lock:
+            self.checkin = {"enabled": enabled, "time": time, "targets": targets, "message": message,
+                            "skip_if_logged": bool(data.get("skip_if_logged", True)), "open_path": open_path}
+            await self._save()
+            return self.checkin
 
     async def async_set_notified(self, phase: str | None, day: str) -> None:
         async with self._lock:
@@ -397,7 +423,7 @@ class CycleStore:
         targets = list(dict.fromkeys(data.get("targets") or []))
         if not targets:
             raise InvalidLog("pick at least one phone to remind")
-        if set(targets) - allowed_targets:
+        if set(targets) - allowed_targets - {"owner"}:
             raise InvalidLog("you can only remind the phones of people who can see this tracker")
         dose = self._clean_dose({"med": data["med"], "dose": data.get("dose"), "unit": data.get("unit")})
         start = self._date(data.get("start"), "start") or date.today().isoformat()

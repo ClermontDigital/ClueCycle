@@ -1,3 +1,14 @@
+## 0.5.0
+
+- **Daily reminder.** "How do you feel today?" at a set time (12:00 by default), like Clue's. Tapping
+  it opens the tracker on the Track tab, and by default it's skipped once something is logged that
+  day. Anyone who can edit the tracker can set it up.
+- **"The owner's phones"** as a recipient for every notification. It's worked out each time a
+  notification is sent, covers phones and tablets but not Macs, and includes phones signed in later.
+- **Admins** can switch on the owner's cycle notifications and daily reminder in the integration's
+  options. These only go to the owner's own phones.
+- The card opens on the Track tab when its address ends in `?cc_view=track`.
+
 ## 0.4.1
 
 - The compact widget no longer repeats the next period when the ring's own line already mentions it.

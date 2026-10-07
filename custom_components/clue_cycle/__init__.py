@@ -64,6 +64,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Settings changes just refresh; turning sensors on or off needs a reload (api.py schedules it)."""
+    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if data and "reminders" in data:
+        reminders = data["reminders"]
+        if reminders.phase_settings()["enabled"] and not data["store"].notified.get("phase"):
+            await reminders.async_seed_phase()   # newly switched on: don't announce the current phase
+        reminders.async_reschedule()
     async_dispatcher_send(hass, SIGNAL_UPDATED.format(entry.entry_id))
 
 
