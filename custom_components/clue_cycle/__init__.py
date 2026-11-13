@@ -124,6 +124,7 @@ async def _async_register_resource(hass: HomeAssistant, url: str) -> bool:
             return False
         if hasattr(resources, "loaded") and not resources.loaded:
             await resources.async_load()
+            resources.loaded = True   # as Home Assistant's own loading does, so it isn't loaded twice
         base = url.split("?")[0]
         for item in resources.async_items():
             existing = item.get("url", "")

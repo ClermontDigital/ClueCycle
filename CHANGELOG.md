@@ -1,3 +1,8 @@
+## 0.5.1
+
+- **The dashboards' resource list is read once.** Adding the card to it now marks the list loaded, as
+  Home Assistant does itself, so the first dashboard to ask for it doesn't read it from storage again.
+
 ## 0.5.0
 
 - **Daily reminder.** "How do you feel today?" at a set time (12:00 by default), like Clue's. Tapping

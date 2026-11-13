@@ -178,3 +178,23 @@ async def test_track_layout_is_shared_and_needs_edit(hass, hass_ws_client, hass_
     viewer = await hass_ws_client(hass, hass_read_only_access_token)
     r = await _ws(viewer, type=f"{DOMAIN}/layout_set", entry_id=entry.entry_id, order=["pain"])
     assert r["error"]["code"] == "unauthorized"
+
+
+async def test_the_resource_list_is_loaded_once(hass, hass_ws_client, hass_admin_user):
+    """Registering the card marks the resource list loaded, so the dashboards' own request doesn't load it again."""
+    from homeassistant.components.lovelace import LOVELACE_DATA
+
+    assert await async_setup_component(hass, "lovelace", {})
+    resources = hass.data[LOVELACE_DATA].resources
+    loads, load = [], resources.async_load
+
+    async def counted():
+        loads.append(1)
+        await load()
+
+    resources.async_load = counted
+    await _setup(hass, hass_admin_user.id)
+    client = await hass_ws_client(hass)
+    r = await _ws(client, type="lovelace/resources")
+    assert [i["url"] for i in r["result"] if i["url"].startswith("/clue_cycle/")] != []
+    assert len(loads) == 1
